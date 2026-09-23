@@ -1,0 +1,10 @@
+# Portable runtime — rebuilt from sources via "flc configure" + "flc make"
+assets/
+
+# Logs and Python cache
+logs/
+__pycache__/
+*.pyc
+
+# Packaged release zips
+*.zip

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  flc sample GPX route.
+  A GPX <trk> contains one or more <trkseg>, each with <trkpt lat="" lon="">
+  points. If a point has a <time>, flc waits for the real gap between points,
+  so the movement speed in the file is reproduced on the phone.
+  After the route ends, flc holds the last point until you press Ctrl+C.
+
+  Tip: export routes from Strava, Komoot, AllTrails, GPS devices, etc. as GPX
+  (track format, GPX 1.1). Routes saved as <rte> (route) or waypoints only are
+  not replayed by pymobiledevice3 - use a track (<trk>).
+-->
+<gpx version="1.1" creator="flc"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Sample short walk near the gym</name>
+    <trkseg>
+      <trkpt lat="23.137106" lon="113.331353"><time>2026-09-22T00:00:00Z</time></trkpt>
+      <trkpt lat="23.137150" lon="113.331500"><time>2026-09-22T00:00:10Z</time></trkpt>
+      <trkpt lat="23.137200" lon="113.331650"><time>2026-09-22T00:00:20Z</time></trkpt>
+      <trkpt lat="23.137180" lon="113.331800"><time>2026-09-22T00:00:30Z</time></trkpt>
+      <trkpt lat="23.137120" lon="113.331900"><time>2026-09-22T00:00:40Z</time></trkpt>
+      <trkpt lat="23.137106" lon="113.331353"><time>2026-09-22T00:00:55Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

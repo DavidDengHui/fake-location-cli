@@ -1,0 +1,11 @@
+# flc sample text route.
+# One point per line:  [time] latitude longitude
+#   time is seconds from start (or HH:MM:SS); optional - if omitted, points
+#   are spaced 10s apart. Separators: spaces, commas, tabs, ; or |.
+# Lines starting with '#' are comments. Run with:  flc set gpx example-route.txt
+0 23.137106 113.331353
+10 23.137150 113.331500
+20 23.137200 113.331650
+30 23.137180 113.331800
+40 23.137120 113.331900
+55 23.137106 113.331353

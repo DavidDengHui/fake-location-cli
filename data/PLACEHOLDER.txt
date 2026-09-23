@@ -1,0 +1,7 @@
+This folder stores data you generate:
+
+  route-<timestamp>.gpx   routes built by "flc set gpx new"
+  <name>.gpx              GPX produced from a .txt/.csv conversion
+
+It is created automatically. Log files live in the separate logs\ folder.
+You can safely delete route files you no longer need.
