@@ -122,6 +122,15 @@ into `assets\` (items already present are skipped). Then `flc make` builds the
 trimmed portable Python offline into `assets\python` (no compiler needed). After
 that, continue with steps 1–5 above.
 
+To upgrade later without re-downloading a whole package, run:
+
+```
+flc make update          # Gitee by default (direct, no proxy needed)
+flc make update github   # or pull from GitHub (where GitHub is reachable)
+```
+
+Only the program sources are overwritten; `assets\`, `data\` and `logs\` are kept.
+
 ---
 
 ## 3. Command reference
@@ -143,6 +152,7 @@ portable package never needs this command.
 | Command | Alias | Meaning |
 |---|---|---|
 | `flc make` | — | Build the trimmed portable Python from `assets\dist` into `assets\python` (fully offline, no compiler). Run after `flc configure`. |
+| `flc make update` | `--update` | Update to the latest sources from Gitee (default, no proxy) or GitHub (`flc make update github`). Git clones use `git pull`; source-archive installs (no `.git`) download the latest source archive and overwrite sources in place, **keeping `assets\`, `data\` and `logs\`**. |
 | `flc make install` | `-i` | Add this folder to your **user PATH**, then automatically install the USB driver (one UAC prompt), cache the offline DDI, prepare the DDI on a connected phone, and finally print a full `flc server status` summary. |
 | `flc make -i --prefix=PATH` | `--p=PATH` | Copy the whole program (including `assets\`) to PATH and add **that** folder to the user PATH. `-i` is the short install flag and `--p=` the short prefix flag. Example: `flc make -i --p="C:\flc"` (same as `flc make install --prefix="C:\flc"`). |
 | `flc make uninstall` | `-u` | Remove the folder from the user PATH, then ask whether to delete the whole program folder. Add `-y` to answer yes. |
@@ -200,9 +210,11 @@ after that the DDI persists on the phone and every later run is fully offline.
 | Command | Meaning |
 |---|---|
 | `flc set <lat> <lng>` | Set and **hold** a location using two plain numbers (latitude then longitude). Example: `flc set 23.137106 113.331353` |
+| `flc set <lat> <lng> --keep <sec>` | Set and hold with a custom **re-apply interval** (1–3600 s, default 15 s). Short form: `-k`. Example: `flc set 23.137106 113.331353 --keep 5` |
 | `flc set` | No coordinates given — you are prompted to type latitude and longitude one by one (example shown: `23.137106 113.331353`). |
 | `flc set -Lat <lat> -Lng <lng>` | The named form still works, equivalent to the plain two-number form. |
 | `flc set gpx <file>` | Replay a route (`.gpx`, or a `.txt`/`.csv` auto-converted to GPX), then hold the last point. See [GPX replay](#gpx-replay). |
+| `flc set gpx <file> --keep <sec>` | Replay a route and hold its end point with a custom interval (default 15 s, short form `-k`). |
 | `flc set gpx new` | Build a route **line by line** (time + latitude + longitude), then replay it. See [Building a route](#building-a-route). |
 | `flc set own` or `flc set -o` | Clear the simulation and restore the real location. |
 | `flc help` / `flc -h` | Show the help. |
@@ -226,7 +238,8 @@ Coordinates are decimal **latitude then longitude**. Negative numbers are fine
 background tunneld**. The holding script (`flc_set.py`) does more than send the
 spot once:
 
-- It re-applies the location **every 15 seconds** on the same connection, so the
+- It re-applies the location **every 15 seconds by default** on the same connection
+  (changeable with `flc set ... --keep <sec>` to any value from 1 to 3600 s; short form `-k`), so the
   phone keeps reporting the fake spot instead of drifting back to real GPS.
 - If the USB/network tunnel drops, it **automatically rebuilds the tunnel** and
   resumes holding.
@@ -253,8 +266,8 @@ it:
 
 - Each track point is sent in order. If points carry timestamps, the tool waits
   for the real time gap between them, reproducing the recorded speed.
-- When the track ends it **holds the last point** with the same 15-second
-  keepalive.
+- When the track ends it **holds the last point** with the same keepalive
+  (default 15 seconds, adjustable with `--keep <sec>`).
 - A working sample is included: `flc set gpx data\example-route.gpx`.
 
 Export a route from Strava, Komoot, AllTrails, a GPS watch, or a route planner as
@@ -358,9 +371,10 @@ PC to rebuild the portable runtime.
   matching DDI. Update pymobiledevice3 (or replace the `assets\ddi\` folder) so
   the bundled build id matches, then run `flc ddi sync`.
 - **Location is wrong / does not move / reverts to real GPS** — the holding
-  window must stay open; it re-applies the spot every 15 seconds and rebuilds the
-  tunnel if it drops. If the spot still reverts, run `flc set own`, then `set`
-  again. Some apps cache location; reopen them.
+  window must stay open; it re-applies the spot at the configured interval
+  (default 15 seconds, adjustable with `--keep <sec>`) and rebuilds the tunnel if it
+  drops. If the spot still reverts, run `flc set own`, then `set` again. Some
+  apps cache location; reopen them.
 - **GPX track does not move** — the file must contain a `<trk>` track (not only
   `<rte>`/waypoints); see [GPX replay](#gpx-replay). Use the bundled
   `data\example-route.gpx` to confirm the feature works.

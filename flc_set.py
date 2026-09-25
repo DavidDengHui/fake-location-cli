@@ -12,9 +12,12 @@ the iPhone then reverts to its real location. This script:
   * restores the real location on Ctrl+C / window close.
 
 Usage:
-    python flc_set.py <latitude> <longitude> [udid]
-    python flc_set.py point <latitude> <longitude> [udid]
-    python flc_set.py gpx <route.gpx> [udid]
+    python flc_set.py <latitude> <longitude> [udid] [--keep <seconds>]
+    python flc_set.py point <latitude> <longitude> [udid] [--keep <seconds>]
+    python flc_set.py gpx <route.gpx> [udid] [--keep <seconds>]
+
+The --keep (or -k) flag overrides the default 15-second re-apply interval
+(allowed range 1-3600 seconds).
 """
 import asyncio
 import sys
@@ -30,7 +33,7 @@ from pymobiledevice3.services.dvt.instruments.location_simulation import Locatio
 logging.basicConfig(level=logging.WARNING, format="[pmd3] %(message)s")
 logging.getLogger("LocationSimulation").setLevel(logging.INFO)
 
-KEEPALIVE = 15.0          # re-apply the location every N seconds
+KEEPALIVE = 15.0          # default re-apply interval (seconds); override with flc set ... --keep <sec>
 RECONNECT_DELAY = 3.0     # wait before rebuilding a dropped tunnel
 
 _DDI_CHECKED = False
@@ -117,11 +120,39 @@ def gpx_last_point(path):
 
 
 def parse_args(argv):
-    """Return (mode, target, udid). mode is 'point' (target=(lat,lng)) or 'gpx' (target=path)."""
+    """Return (mode, target, udid, interval). mode is 'point' (target=(lat,lng)) or 'gpx' (target=path).
+
+    interval (seconds) comes from --keep/-k; None means use the default.
+    """
+    argv = list(argv)
+    interval = None
+    clean = []
+    i = 0
+    while i < len(argv):
+        if argv[i] in ('--keep', '-k'):
+            if i + 1 >= len(argv):
+                print("Missing value for --keep. Example: flc set 23.137106 113.331353 --keep 5")
+                return None
+            try:
+                interval = float(argv[i + 1])
+            except ValueError:
+                print(f"Invalid keep value: {argv[i + 1]}. Use seconds, e.g. --keep 5")
+                return None
+            i += 2
+        else:
+            clean.append(argv[i])
+            i += 1
+    argv = clean
+    if interval is not None:
+        if interval < 1 or interval > 3600:
+            print("Keep interval must be between 1 and 3600 seconds.")
+            return None
+        if interval < 3:
+            print("[flc] Warning: an interval below 3s adds no benefit and may cause message backlog on the tunnel.")
     if len(argv) < 2:
         print("Usage:")
-        print("  flc_set.py <latitude> <longitude> [udid]")
-        print("  flc_set.py gpx <route.gpx> [udid]")
+        print("  flc_set.py <latitude> <longitude> [udid] [--keep <seconds>]")
+        print("  flc_set.py gpx <route.gpx> [udid] [--keep <seconds>]")
         return None
     first = argv[1]
     if first in ("gpx", "--gpx"):
@@ -130,7 +161,7 @@ def parse_args(argv):
             return None
         path = argv[2]
         udid = argv[3] if len(argv) > 3 else None
-        return ("gpx", path, udid)
+        return ("gpx", path, udid, interval)
     if first in ("point", "--point"):
         if len(argv) < 4:
             print("Point mode requires latitude and longitude.")
@@ -141,7 +172,7 @@ def parse_args(argv):
             print("Invalid coordinates. Use decimal numbers, e.g. 23.137106 113.331353")
             return None
         udid = argv[4] if len(argv) > 4 else None
-        return ("point", (lat, lng), udid)
+        return ("point", (lat, lng), udid, interval)
     # bare coordinates: <lat> <lng>
     if len(argv) < 3:
         print("Please provide both latitude and longitude.")
@@ -153,22 +184,22 @@ def parse_args(argv):
         print("Invalid coordinates. Use decimal numbers, e.g. 23.137106 113.331353")
         return None
     udid = argv[3] if len(argv) > 3 else None
-    return ("point", (lat, lng), udid)
+    return ("point", (lat, lng), udid, interval)
 
 
-async def hold_point(lat, lng, udid, stop_event):
+async def hold_point(lat, lng, udid, stop_event, interval):
     """Establish the userspace tunnel once and hold a fixed point."""
     rsd = await userspace_tunnel.establish_userspace_rsd(serial=udid)
     await ensure_ddi(rsd)
     async with DvtProvider(rsd) as dvt, LocationSimulation(dvt) as loc:
         await loc.set(lat, lng)
         print(f"[flc] Simulated location set: {lat}, {lng}")
-        print("[flc] Holding location (re-applied every %ds). Keep this window open." % int(KEEPALIVE))
+        print(f"[flc] Holding location (re-applied every {int(interval)}s). Keep this window open.")
         print("[flc] Press Ctrl+C, or close the window, to STOP and restore the real location.")
         print()
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=KEEPALIVE)
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
             if stop_event.is_set():
@@ -181,7 +212,7 @@ async def hold_point(lat, lng, udid, stop_event):
                 raise
 
 
-async def hold_gpx(path, udid, stop_event, played):
+async def hold_gpx(path, udid, stop_event, played, interval):
     """Play a GPX route once, then hold its last point with keepalives."""
     rsd = await userspace_tunnel.establish_userspace_rsd(serial=udid)
     await ensure_ddi(rsd)
@@ -197,12 +228,12 @@ async def hold_gpx(path, udid, stop_event, played):
             return
         await loc.set(last.latitude, last.longitude)
         print(f"[flc] Holding end point: {last.latitude}, {last.longitude}")
-        print("[flc] Holding location (re-applied every %ds). Keep this window open." % int(KEEPALIVE))
+        print(f"[flc] Holding location (re-applied every {int(interval)}s). Keep this window open.")
         print("[flc] Press Ctrl+C, or close the window, to STOP and restore the real location.")
         print()
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=KEEPALIVE)
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
             if stop_event.is_set():
@@ -230,7 +261,7 @@ async def restore_real_location(udid):
         return False
 
 
-async def run(mode, target, udid):
+async def run(mode, target, udid, interval):
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
@@ -251,10 +282,10 @@ async def run(mode, target, udid):
     while not stop_event.is_set():
         try:
             if mode == "gpx":
-                await hold_gpx(target, udid, stop_event, played)
+                await hold_gpx(target, udid, stop_event, played, interval)
             else:
                 lat, lng = target
-                await hold_point(lat, lng, udid, stop_event)
+                await hold_point(lat, lng, udid, stop_event, interval)
         except asyncio.CancelledError:
             stop_event.set()
         except Exception as ex:
@@ -275,7 +306,9 @@ def main():
     parsed = parse_args(sys.argv)
     if parsed is None:
         return 2
-    mode, target, udid = parsed
+    mode, target, udid, interval = parsed
+    if interval is None:
+        interval = KEEPALIVE
     sync_local_ddi()
     if mode == "point":
         lat, lng = target
@@ -288,7 +321,7 @@ def main():
             print(f"GPX file not found: {target}")
             return 2
     try:
-        asyncio.run(run(mode, target, udid))
+        asyncio.run(run(mode, target, udid, interval))
     except KeyboardInterrupt:
         pass
     return 0

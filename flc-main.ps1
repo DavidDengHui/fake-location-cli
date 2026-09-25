@@ -8,7 +8,7 @@
 #
 # Layout (all downloaded/runtime dependencies live under assets\):
 #   flc.cmd, flc-main.ps1, flc_*.py, requirements.txt, README*
-#   samples\ data\ logs\
+#   data\ logs\
 #   assets\
 #     dist\                 build materials downloaded by "flc configure"
 #       python-<ver>.nupkg    official python.org NuGet package
@@ -20,6 +20,7 @@
 # Lifecycle:
 #   flc configure   download all official materials into assets\ (idempotent)
 #   flc make        build the minimal runtime from those materials (offline)
+#   flc make update [gitee|github]   update program sources to the latest
 #   flc make clean  remove assets\ (sources only)
 #   flc make install [--prefix=PATH]   copy (optional) + add to user PATH
 #   flc make uninstall                 remove from PATH (+ optionally delete)
@@ -640,15 +641,104 @@ function Invoke-MakeUninstall($opts) {
     }
 }
 
+# make update [gitee|github]: update the program sources to the latest version.
+# Git clones are fast-forwarded with git pull; source-archive installs (no .git)
+# download the latest source archive and overwrite sources in place, keeping
+# assets\, data\ and logs\. Default source is Gitee (works without a proxy).
+function Invoke-MakeUpdate($opts) {
+    $opts = @($opts)
+    $source = 'gitee'
+    foreach ($o in $opts) {
+        if ($o -match '(?i)^(--)?github$' -or $o -match '(?i)^--gh$') { $source = 'github' }
+        elseif ($o -match '(?i)^(--)?gitee$') { $source = 'gitee' }
+    }
+    Write-Host ("=== flc make update (source: " + $source + ") ===")
+
+    $gitUrls = @{
+        gitee  = 'https://gitee.com/DavidDengHui/fake-location-cli.git'
+        github = 'https://github.com/DavidDengHui/fake-location-cli.git'
+    }
+    $archives = @{
+        gitee  = 'https://gitee.com/DavidDengHui/fake-location-cli/repository/archive/master.tar.gz'
+        github = 'https://github.com/DavidDengHui/fake-location-cli/archive/refs/heads/master.tar.gz'
+    }
+
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    $isRepo = Test-Path (Join-Path $ROOT '.git')
+
+    if ($isRepo -and $gitCmd) {
+        Write-Host 'Git repository detected - fast-forwarding to the latest sources...'
+        $remotes = @(& git -C $ROOT remote 2>$null)
+        if ($remotes -contains 'origin') {
+            $cur = (& git -C $ROOT remote get-url origin)
+            if ($source -eq 'github' -and $cur -notmatch 'github') {
+                & git -C $ROOT remote set-url origin $gitUrls.github
+                Write-Host 'origin switched to GitHub.'
+            }
+            elseif ($source -eq 'gitee' -and $cur -notmatch 'gitee') {
+                & git -C $ROOT remote set-url origin $gitUrls.gitee
+                Write-Host 'origin switched to Gitee.'
+            }
+        }
+        else {
+            & git -C $ROOT remote add origin $gitUrls[$source]
+        }
+        & git -C $ROOT pull --ff-only origin master
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Fast-forward pull failed (local modifications or network). Current files kept.'
+            Write-Host 'Stash or commit your changes, then run this command again.'
+            exit 1
+        }
+    }
+    else {
+        Write-Host ("Downloading the latest source archive from " + $source + '...')
+        $tag = [guid]::NewGuid().ToString('N').Substring(0,8)
+        $tmpGz  = Join-Path $env:TEMP ("flc-update-$tag.tar.gz")
+        $tmpDir = Join-Path $env:TEMP ("flc-update-$tag")
+        if ($source -eq 'github') {
+            $curlArgs = @('-L','--fail','--ssl-no-revoke','--proxy','http://127.0.0.1:26561',
+                          '--connect-timeout','20','-s','-o',$tmpGz,$archives[$source])
+        }
+        else {
+            $curlArgs = @('-L','--fail','--connect-timeout','20','-s','-o',$tmpGz,$archives[$source])
+        }
+        & curl.exe @curlArgs
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpGz)) {
+            Write-Host "Download from $source failed (network or proxy)."
+            Write-Host 'Try the other source:  flc make update gitee   (or github)'
+            exit 1
+        }
+        New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+        tar -xzf $tmpGz -C $tmpDir
+        if ($LASTEXITCODE -ne 0) { Write-Host 'Could not extract the source archive.'; exit 1 }
+        $inner = Get-ChildItem $tmpDir -Directory | Select-Object -First 1
+        if (-not $inner) { Write-Host 'Unexpected archive layout.'; exit 1 }
+        # Overwrite sources only; without /MIR, robocopy never deletes assets\, data\, logs\.
+        robocopy $inner.FullName $ROOT /E /NFL /NDL /NJH /NJS /NP /XD __pycache__ | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            Write-Host "Copying updated sources failed (robocopy code $LASTEXITCODE)."
+            exit 1
+        }
+        Remove-Item $tmpGz -Force -ErrorAction SilentlyContinue
+        Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host ''
+    Write-Host 'Sources updated. Your assets\, data\ and logs\ were kept.'
+    Write-Host 'A runtime rebuild is only needed if the dependencies change: flc make'
+    Log "make update ($source)"
+}
+
 function Do-Make($rest) {
     $action = if ($rest -and $rest.Count -gt 0) { $rest[0] } else { '' }
     $opts   = if ($rest -and $rest.Count -gt 1) { @($rest[1..($rest.Count-1)]) } else { @() }
     switch -Regex ($action) {
         '^$|^(build|all)$'    { Invoke-Make }
         '^(clean|-c)$'        { Invoke-MakeClean $opts }
+        '^(update|--update)$' { Invoke-MakeUpdate $opts }
         '^(install|-i)$'      { Invoke-MakeInstall $opts }
         '^(uninstall|-u)$'    { Invoke-MakeUninstall $opts }
-        default { Write-Host 'Unknown make action. Use: flc make [clean|install|uninstall]'; exit 1 }
+        default { Write-Host 'Unknown make action. Use: flc make [update|clean|install|uninstall]'; exit 1 }
     }
 }
 
@@ -984,6 +1074,30 @@ function Do-Set($rest) {
     }
     $setScript = Join-Path $ROOT 'flc_set.py'
 
+    # Optional hold interval: --keep <sec> / -k <sec>. Strip it before
+    # parsing coordinates so its value is never mistaken for a latitude/longitude.
+    $interval = $null
+    $clean = @()
+    for ($i = 0; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq '--keep' -or $rest[$i] -eq '-k') {
+            if ($i + 1 -ge $rest.Count) {
+                Write-Host 'Missing value for --keep. Example: flc set 23.137106 113.331353 --keep 5'; exit 1
+            }
+            $interval = $rest[$i + 1]; $i++
+        }
+        else { $clean += $rest[$i] }
+    }
+    $rest = $clean
+    $intervalSec = $null
+    if ($interval) {
+        $iv = 0.0
+        if (-not [double]::TryParse($interval, [ref]$iv) -or $iv -lt 1 -or $iv -gt 3600) {
+            Write-Host 'Keep interval must be a number between 1 and 3600 seconds.'; exit 1
+        }
+        $intervalSec = [int][math]::Round($iv)
+        if ($iv -lt 3) { Write-Host ("Warning: an interval below 3s adds no benefit and may cause message backlog on the tunnel (using {0}s)." -f $intervalSec) }
+    }
+
     if ($rest.Count -gt 0 -and ($rest[0] -eq 'gpx' -or $rest[0] -eq '--gpx')) {
         $arg = $null
         if ($rest.Count -ge 2) { $arg = $rest[1] }
@@ -1014,7 +1128,9 @@ function Do-Set($rest) {
         Ensure-AmdsRunning
         Write-Host ("Replaying GPX route: {0}" -f $gpx)
         Log "set gpx $gpx"
-        & $PY -u $setScript 'gpx' $gpx
+        $pyArgs = @('gpx', $gpx)
+        if ($intervalSec) { $pyArgs += @('--keep', $intervalSec) }
+        & $PY -u $setScript @pyArgs
         return
     }
 
@@ -1046,7 +1162,9 @@ function Do-Set($rest) {
     Ensure-AmdsRunning
     Write-Host ("Setting simulated location: {0}, {1}" -f $latV, $lngV)
     Log "set $latV $lngV"
-    & $PY -u $setScript ([string]$latV) ([string]$lngV)
+    $pyArgs = @([string]$latV, [string]$lngV)
+    if ($intervalSec) { $pyArgs += @('--keep', $intervalSec) }
+    & $PY -u $setScript @pyArgs
 }
 
 function Ensure-AmdsRunning {
@@ -1074,6 +1192,7 @@ function Show-Help {
     Write-Host 'Setup (download -> build -> install):'
     Write-Host '  flc configure|-c               Download all official dependencies into assets\ (idempotent)'
     Write-Host '  flc make                       Build the minimal runtime from the downloaded materials'
+    Write-Host '  flc make update [gitee|github] Update sources to the latest (Gitee default, no proxy needed)'
     Write-Host '  flc make clean|-c              Remove assets\ (keep sources only)'
     Write-Host '  flc make install|-i [--prefix=PATH | --p=PATH]  Copy/add to PATH, auto-install USB driver + DDI'
     Write-Host '  flc make uninstall|-u          Remove from PATH, then optionally delete the whole folder'
@@ -1096,11 +1215,14 @@ function Show-Help {
     Write-Host '  flc ddi install|-i            Install the DDI on the iPhone (one-time per device/iOS)'
     Write-Host ''
     Write-Host '  flc set <lat> <lng>            Set and HOLD a location (two numbers, e.g. 23.137106 113.331353)'
+    Write-Host '  flc set <lat> <lng> --keep <sec>  Custom hold/re-apply interval (1-3600s, default 15s)'
     Write-Host '  flc set                        Prompt for latitude and longitude one by one'
     Write-Host '  flc set gpx <file>            Replay a route (.gpx, or .txt/.csv auto-converted), hold end'
+    Write-Host '  flc set gpx <file> --keep <sec>  Replay a route and hold its end with a custom interval'
     Write-Host '  flc set gpx new               Build a route line by line (time + lat + lng), then replay'
     Write-Host '  flc set own|-o                 Clear simulation and restore the real location'
     Write-Host '  (  named form still works: flc set -Lat 23.137106 -Lng 113.331353 )'
+    Write-Host '  (  short form of --keep: -k <sec> )'
     Write-Host ''
     Write-Host '  flc help|-h                    Show this help'
     Write-Host ''
