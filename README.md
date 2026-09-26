@@ -51,9 +51,11 @@ The `wintun` tunnel driver is already bundled inside the pymobiledevice3 package
 
 - Windows 10 / 11 (64-bit).
 - An iPhone on **iOS 17 or newer** (tested on iOS 17–27).
-- A USB data cable (USB connection is the supported path).
+- A USB data cable for the first pairing. Afterwards the same iPhone also works
+  **over Wi-Fi, with no cable** (`flc wifi on`).
 - Administrator rights only for: installing the driver, and starting/stopping
-  the Apple service. Setting a location itself does **not** need administrator.
+  the Apple service. Setting a location itself does **not** need administrator,
+  over USB or over Wi-Fi.
 
 ---
 
@@ -106,7 +108,37 @@ the DDI. Open a command window **in this folder** (`Shift+Right-click` →
    If you close the window without Ctrl+C and the fake spot remains, run
    `flc set own` once.
 
-### B) Starting from source only (GitHub / a source zip)
+### B) Go wireless — use the iPhone without a cable
+
+Once the iPhone has been trusted on USB (steps 1–3 above), the cable is optional:
+
+1. With the iPhone still on USB and unlocked, run:
+   ```
+   flc wifi on
+   ```
+   This switches on Wi-Fi syncing on the iPhone — the same setting iTunes/Finder
+   exposes. Once per iPhone-and-PC pair is enough.
+2. Unplug the cable. Keep the iPhone **unlocked** and on the **same Wi-Fi
+   network** as this PC, with Wi-Fi (and Bluetooth) on. `flc wifi status` tells
+   you whether the Bonjour/mDNS service the discovery relies on is running.
+3. Confirm the iPhone is discovered:
+   ```
+   flc wifi list
+   ```
+4. Set the location over Wi-Fi — just add `--wifi`:
+   ```
+   flc set 23.137106 113.331353 --wifi
+   flc set gpx data\example-route.gpx --wifi
+   flc set own --wifi
+   ```
+   Holding the spot, Ctrl+C, GPX replay and `--keep` all behave exactly as they
+   do over USB. With several iPhones on the network, choose one with
+   `--udid <UDID>` (UDIDs are listed by `flc devices list`).
+
+If the iPhone never shows up, see the wireless items in
+[Troubleshooting](#6-troubleshooting).
+
+### C) Starting from source only (GitHub / a source zip)
 
 A source-only folder has no `assets\` and cannot run until the runtime is built.
 On a PC with internet access:
@@ -167,7 +199,7 @@ works by running `flc.cmd` directly even if it is not on the PATH.
 
 | Command | Alias | Meaning |
 |---|---|---|
-| `flc server status` | `-s` | Show portable Python, pymobiledevice3 version, the Apple service, the tunneld port, the offline driver/DDI, and connected devices. |
+| `flc server status` | `-s` | Show portable Python, pymobiledevice3 version, the Apple service, the tunneld port, the offline driver/DDI, connected devices, and how many iPhones are visible over Wi-Fi. |
 | `flc server kill` | `-k` | Stop conflicting background processes (anything holding tunneld port 49151, and stray `pymobiledevice3 tunneld` / `simulate-location` processes). Administrator. |
 | `flc server kill --pair` | `-p` | In addition to stopping processes, clear stale pair records and restart the Apple Mobile Device Service, to fix usbmux error **183** (a conflicting old pair record) while pairing / installing the DDI. Administrator; afterwards replug the phone, tap "Trust" on the iPhone, and run `flc ddi install`. |
 
@@ -184,10 +216,31 @@ works by running `flc.cmd` directly even if it is not on the PATH.
 
 | Command | Alias | Meaning |
 |---|---|---|
-| `flc devices list` | `-l` | List connected Apple devices (name, model, iOS, UDID, USB/Network). |
+| `flc devices list` | `-l` | List connected Apple devices (name, model, iOS, UDID, USB/Wi-Fi). |
 | `flc devices connect` | `-c` | Start the Apple service and send a pairing request (tap Trust on the iPhone). Administrator. |
 | `flc devices disconnect` | `-d` | Stop the Apple service, releasing all iPhone connections. Administrator. |
 | `flc devices reconnect` | `-r` | Restart the Apple service and re-list devices (handy after a glitch). Administrator. |
+
+### wifi — wireless (cable-free) iPhone
+
+flc can talk to the iPhone over Wi-Fi instead of USB. Apple Mobile Device Support
+announces the iPhone over Bonjour, it then appears in `usbmux list` as a network
+device, and the same userspace tunnel is built — still with **no administrator
+rights**, and no tunneld.
+
+| Command | Alias | Meaning |
+|---|---|---|
+| `flc wifi status` | `-s` | Show the Bonjour/mDNS service, whether Wi-Fi syncing is enabled on the iPhone, and the iPhones visible over Wi-Fi. |
+| `flc wifi on` | `-o` | Enable Wi-Fi syncing on the iPhone (once, while it is on USB). Afterwards the cable can stay unplugged. |
+| `flc wifi off` | `-f` | Disable Wi-Fi syncing again (USB connection required). |
+| `flc wifi list` | `-l` | List the iPhones currently visible over Wi-Fi. |
+| `flc wifi browse` | `-b` | Browse the local network for iPhones with Bonjour — useful before they show up in `flc wifi list`. |
+| `flc wifi pair [name]` | `-p` | Pair an iPhone over Wi-Fi directly (RemotePairing). Needs Developer Mode on the iPhone; pick the device in the list and type the code shown here on the iPhone. |
+
+Requirements for Wi-Fi use: the iPhone was trusted on this PC at least once, is
+**unlocked**, and is on the **same Wi-Fi network**; the **Bonjour Service**
+installed with Apple Mobile Device Support must be running (`flc wifi status`
+reports it, `flc drivers install` restores it).
 
 ### ddi — offline Developer Disk Image
 
@@ -200,7 +253,7 @@ automatically before the first `set`.
 |---|---|---|
 | `flc ddi status` | `-s` | Show the bundled and cached DDI build id, and whether the connected iPhone already has it installed. |
 | `flc ddi sync` | — | Copy the bundled offline DDI into the local cache (also done automatically on first `set`). |
-| `flc ddi install` | `-i` | Personalize and install the DDI on the connected iPhone (normally automatic on the first `set`). |
+| `flc ddi install [UDID]` | `-i` | Personalize and install the DDI on the connected iPhone (normally automatic on the first `set`). Give a UDID to target a specific device, e.g. a Wi-Fi one. |
 
 The **only** online step that cannot be pre-bundled is Apple's one-time
 personalization signature (a few KB) on the very first install to *each* iPhone;
@@ -218,6 +271,8 @@ after that the DDI persists on the phone and every later run is fully offline.
 | `flc set gpx <file> --keep <sec>` | Replay a route and hold its end point with a custom interval (default 15 s, short form `-k`). |
 | `flc set gpx new` | Build a route **line by line** (time + latitude + longitude), then replay it. See [Building a route](#building-a-route). |
 | `flc set own` or `flc set -o` | Clear the simulation and restore the real location. |
+| `flc set <lat> <lng> --wifi` | Same, but over **Wi-Fi** instead of USB (short form `-w`). Works with every `set` form above. |
+| `flc set <lat> <lng> --udid <UDID>` | Target one specific device (USB or Wi-Fi). Short form `-U`; UDIDs come from `flc devices list`. |
 | `flc help` / `flc -h` | Show the help. |
 
 Coordinates are decimal **latitude then longitude**. Negative numbers are fine
@@ -246,6 +301,11 @@ spot once:
   resumes holding.
 - On **Ctrl+C** (or termination) it opens a fresh connection and sends a
   **clear**, so the phone returns to its real location.
+
+Over Wi-Fi (`flc set ... --wifi`) nothing changes: if the wireless tunnel drops —
+the iPhone locks, leaves Wi-Fi, or the network hiccups — flc rebuilds it and
+resumes holding. Keep the iPhone unlocked and on the same network so the link
+stays up.
 
 The running window prints lines like:
 
@@ -385,6 +445,21 @@ PC to rebuild the portable runtime.
   PC is conflicting or corrupt. Run `flc server kill --pair` (short `-p`) as
   administrator, then replug the phone, tap "Trust" on the iPhone, and run
   `flc ddi install`.
+- **`flc wifi list` shows nothing / `flc set --wifi` says no iPhone is visible** —
+  the iPhone must have been trusted on this PC at least once over USB, be
+  unlocked, and be on the same Wi-Fi network. Run `flc wifi on` while it is on
+  USB, then `flc wifi status`: the **Bonjour Service** has to be Running
+  (reinstall/repair with `flc drivers install`). `flc wifi browse` shows what
+  Bonjour sees right now; `flc devices reconnect` refreshes the Apple service.
+- **The connection drops when the iPhone locks** — expected: iOS suspends Wi-Fi
+  syncing while the phone is locked or asleep. Unlock it and flc rebuilds the
+  tunnel and resumes holding by itself.
+- **A different iPhone keeps being picked** — target one device explicitly:
+  `flc set <lat> <lng> --udid <UDID>` (UDIDs are listed by `flc devices list`).
+- **`flc wifi pair` finds no device** — turn on Developer Mode on the iPhone
+  (Settings → Privacy & Security → Developer Mode) and keep it on the same Wi-Fi.
+  The normal path needs no pairing code at all: pair once over USB, then
+  `flc wifi on`.
 - **Logs** — see `logs\flc.log` and `logs\amds-install.log`.
 
 ---

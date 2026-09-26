@@ -24,6 +24,11 @@
 #   flc make clean  remove assets\ (sources only)
 #   flc make install [--prefix=PATH]   copy (optional) + add to user PATH
 #   flc make uninstall                 remove from PATH (+ optionally delete)
+#
+# Wireless: after the iPhone is trusted over USB once, "flc wifi on" enables Wi-Fi
+# syncing on the device. Apple Mobile Device Service then keeps announcing it over
+# Bonjour, so it appears in "usbmux list" as ConnectionType "Network" and every
+# command can reach it without a cable ("flc set <lat> <lng> --wifi").
 
 # Parse the raw command line passed by flc.cmd via FLC_ARGS.
 $CliArgs = @()
@@ -829,6 +834,14 @@ function Show-Status {
     } else {
         Write-Host 'Offline DDI image     : absent (run "flc configure")'
     }
+    if (Test-Path $PY) {
+        $netDevs = Get-NetworkDevices
+        if ($netDevs.Count -gt 0) {
+            Write-Host ("Wireless (Wi-Fi)      : " + $netDevs.Count + " iPhone(s) visible over Wi-Fi")
+        } else {
+            Write-Host 'Wireless (Wi-Fi)      : none visible (enable once on USB with: flc wifi on)'
+        }
+    }
     Write-Host '--------------------------------------------'
     Show-Devices
     Write-Host '============================================'
@@ -1059,6 +1072,7 @@ function Show-Devices {
         $prod = $d.ProductType
         $ios  = $d.ProductVersion
         $conn = $d.ConnectionType
+        if ($conn -eq 'Network') { $conn = 'Wi-Fi' }
         if (-not $name) { $name = '(unknown name)' }
         if (-not $prod) { $prod = '' }
         $ver = if ($ios) { ' iOS ' + $ios } else { '' }
@@ -1112,9 +1126,157 @@ function Do-Devices($action) {
     }
 }
 
+# ---------------- wifi (cable-free / wireless connection) ----------------
+#
+# flc normally talks to the iPhone over USB. Once Wi-Fi syncing is enabled on the
+# device (one time, while it is still on USB), the Apple Mobile Device Service
+# keeps announcing it over Bonjour, so the iPhone shows up in "usbmux list" with
+# ConnectionType "Network" and every flc command (set / ddi / devices) can reach
+# it without a cable - the same userspace tunnel is used, still with no
+# administrator rights.
+
+# Apple's mDNS responder ("Bonjour Service", installed together with Apple Mobile
+# Device Support) is what makes an iPhone discoverable over Wi-Fi.
+function Get-BonjourState {
+    $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
+    if ($svc) {
+        if ($svc.Status -eq 'Running') { return 'Running (Wi-Fi discovery available)' }
+        return ($svc.Status.ToString() + ' (start it for Wi-Fi discovery: flc drivers install)')
+    }
+    return 'NOT FOUND (iPhone Wi-Fi discovery needs it; run: flc drivers install)'
+}
+
+function Get-NetworkDevices {
+    $devs = Get-ConnectedDevices
+    if (-not $devs) { return @() }
+    return @($devs | Where-Object { $_ -isnot [string] -and $_.ConnectionType -eq 'Network' })
+}
+
+function Get-DeviceUdid($d) {
+    if ($d.UniqueDeviceID) { return $d.UniqueDeviceID }
+    if ($d.Identifier)     { return $d.Identifier }
+    return ''
+}
+
+function Show-NetworkDevices {
+    Write-Host 'iPhones visible over Wi-Fi:'
+    $net = Get-NetworkDevices
+    if ($net.Count -eq 0) {
+        Write-Host '  none.'
+        Write-Host '  Turn it on once while the iPhone is on USB:  flc wifi on'
+        Write-Host '  (iPhone unlocked, Wi-Fi on, same network as this PC)'
+        return
+    }
+    $i = 0
+    foreach ($d in $net) {
+        $i++
+        $name = if ($d.DeviceName) { $d.DeviceName } else { '(unknown name)' }
+        $ver  = if ($d.ProductVersion) { ' iOS ' + $d.ProductVersion } else { '' }
+        Write-Host ("  [{0}] {1}{2}  UDID: {3}  (Wi-Fi)" -f $i, $name, $ver, (Get-DeviceUdid $d))
+    }
+}
+
+# Choose which Wi-Fi device to target. An explicit UDID always wins; otherwise
+# the only network device is used, and with several the user is asked.
+function Select-WifiDevice($udid) {
+    if ($udid) { return $udid }
+    $net = Get-NetworkDevices
+    if ($net.Count -eq 0) {
+        Write-Host 'No iPhone is visible over Wi-Fi right now.'
+        Write-Host '  * turn Wi-Fi syncing on once with the iPhone on USB:  flc wifi on'
+        Write-Host '  * keep the iPhone unlocked, Wi-Fi on, on the same network as this PC'
+        Write-Host '  * see what is discoverable:  flc wifi list   /   flc wifi browse'
+        return $null
+    }
+    if ($net.Count -eq 1) { return (Get-DeviceUdid $net[0]) }
+    Write-Host 'Several iPhones are visible over Wi-Fi:'
+    $i = 0
+    foreach ($d in $net) {
+        $i++
+        Write-Host ("  [{0}] {1}  UDID: {2}" -f $i, $(if ($d.DeviceName) { $d.DeviceName } else { '(unknown)' }), (Get-DeviceUdid $d))
+    }
+    $ans = (Read-Host 'Which one? (number or UDID, Enter = 1)').Trim()
+    if ($ans -eq '') { return (Get-DeviceUdid $net[0]) }
+    if ($ans -match '^\d+$') {
+        $idx = [int]$ans
+        if ($idx -ge 1 -and $idx -le $net.Count) { return (Get-DeviceUdid $net[$idx - 1]) }
+    }
+    return $ans
+}
+
+function Show-WifiState {
+    $raw = & $PY -m pymobiledevice3 --no-color lockdown wifi-connections 2>$null
+    $txt = ($raw -join ' ').Trim()
+    if ($txt -match 'true')  { Write-Host 'Wi-Fi syncing on iPhone : ENABLED (the cable can be unplugged)' }
+    elseif ($txt -match 'false') { Write-Host 'Wi-Fi syncing on iPhone : disabled (run: flc wifi on, with the iPhone on USB)' }
+    else { Write-Host 'Wi-Fi syncing on iPhone : unknown (no iPhone answered)' }
+    return $txt
+}
+
+function Do-Wifi($wifiArgs) {
+    $action = if ($wifiArgs -and $wifiArgs.Count -gt 0) { $wifiArgs[0] } else { '' }
+    $extra  = if ($wifiArgs -and $wifiArgs.Count -gt 1) { @($wifiArgs[1..($wifiArgs.Count-1)]) } else { @() }
+    switch -Regex ($action) {
+        '^(status|-s)$' {
+            Write-Host '==== flc wireless (Wi-Fi) status ===='
+            Write-Host ('Bonjour/mDNS service    : ' + (Get-BonjourState))
+            Ensure-AmdsRunning
+            Show-WifiState | Out-Null
+            Write-Host '-------------------------------------'
+            Show-NetworkDevices
+            Log 'wifi status'
+        }
+        '^(on|-o|enable)$' {
+            Ensure-AmdsRunning
+            Write-Host 'Enabling Wi-Fi syncing on the iPhone (keep it on USB for this step)...'
+            Invoke-Py -NoColor @('lockdown','wifi-connections','on')
+            Start-Sleep -Seconds 1
+            Show-WifiState | Out-Null
+            Write-Host ''
+            Write-Host 'Done. Unplug the cable and keep the iPhone unlocked on the same Wi-Fi network.'
+            Write-Host 'Then check "flc wifi list" and use:  flc set <lat> <lng> --wifi'
+            Log 'wifi on'
+        }
+        '^(off|-f|disable)$' {
+            Ensure-AmdsRunning
+            Write-Host 'Disabling Wi-Fi syncing on the iPhone...'
+            Invoke-Py -NoColor @('lockdown','wifi-connections','off')
+            Start-Sleep -Seconds 1
+            Show-WifiState | Out-Null
+            Log 'wifi off'
+        }
+        '^(list|-l)$' {
+            Ensure-AmdsRunning
+            Show-NetworkDevices
+            Log 'wifi list'
+        }
+        '^(browse|-b)$' {
+            Write-Host 'Browsing the local network for iPhones (Bonjour, a few seconds)...'
+            Invoke-Py -NoColor @('remote','browse')
+            Log 'wifi browse'
+        }
+        '^(pair|-p)$' {
+            Write-Host 'Pairing an iPhone over Wi-Fi (RemotePairing).'
+            Write-Host 'On the iPhone: enable Developer Mode and keep it on the same Wi-Fi network.'
+            Write-Host 'Pick the device in the list, then enter the code shown here on the iPhone.'
+            if ($extra -and $extra.Count -gt 0) {
+                Invoke-Py -NoColor @('remote','pair','--name',[string]$extra[0])
+            } else {
+                Invoke-Py -NoColor @('remote','pair')
+            }
+            Log 'wifi pair'
+        }
+        default { Write-Host 'Unknown wifi action. Use: flc wifi status|on|off|list|browse|pair'; exit 1 }
+    }
+}
+
 # ---------------- ddi ----------------
 
-function Do-Ddi($action) {
+function Do-Ddi($ddiArgs) {
+    $action = if ($ddiArgs -and $ddiArgs.Count -gt 0) { $ddiArgs[0] } else { '' }
+    # Optional target: "flc ddi install <UDID>" picks one device (e.g. a Wi-Fi one).
+    $udid = $null
+    if ($ddiArgs.Count -gt 1 -and $ddiArgs[1] -notmatch '^-') { $udid = $ddiArgs[1] }
     switch -Regex ($action) {
         '^(sync)$' {
             & $PY -u $DDISCRIPT sync
@@ -1122,16 +1284,18 @@ function Do-Ddi($action) {
         }
         '^(status|-s)$' {
             Ensure-AmdsRunning
-            & $PY -u $DDISCRIPT status
+            $scriptArgs = @('status'); if ($udid) { $scriptArgs += $udid }
+            & $PY -u $DDISCRIPT @scriptArgs
         }
         '^(install|-i)$' {
             Ensure-AmdsRunning
             Write-Host 'Installing the offline Developer Disk Image onto the connected iPhone...'
             Write-Host '(A brand-new device needs a one-time Apple personalization handshake; small & automatic.)'
-            & $PY -u $DDISCRIPT install
+            $scriptArgs = @('install'); if ($udid) { $scriptArgs += $udid }
+            & $PY -u $DDISCRIPT @scriptArgs
             Log 'ddi install'
         }
-        default { Write-Host 'Unknown ddi action. Use: flc ddi status|sync|install'; exit 1 }
+        default { Write-Host 'Unknown ddi action. Use: flc ddi status|sync|install [UDID]'; exit 1 }
     }
 }
 
@@ -1163,6 +1327,32 @@ function New-RoutePath {
 
 function Do-Set($rest) {
     if (-not $rest) { $rest = @() }
+
+    # Wireless / device selection flags, stripped before coordinates are parsed:
+    #   --wifi|-w          target the iPhone over Wi-Fi (no cable)
+    #   --udid|-U <UDID>   target one specific device (USB or Wi-Fi)
+    $wifi = $false
+    $udid = $null
+    $clean = @()
+    for ($i = 0; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -match '^(--wifi|-w)$') { $wifi = $true }
+        elseif ($rest[$i] -match '^(--udid|-U)$') {
+            if ($i + 1 -ge $rest.Count) { Write-Host 'Missing value for --udid. Example: flc set 23.137106 113.331353 --udid 00008110-...'; exit 1 }
+            $udid = $rest[$i + 1]; $i++
+        }
+        else { $clean += $rest[$i] }
+    }
+    $rest = $clean
+    if ($wifi) {
+        $udid = Select-WifiDevice $udid
+        if (-not $udid) { exit 1 }
+    }
+    # Let every child process (python scripts and pymobiledevice3 alike) target it too.
+    if ($udid) {
+        $env:PYMOBILEDEVICE3_UDID = $udid
+        Write-Host ("Target device (UDID)  : " + $udid + $(if ($wifi) { '  [Wi-Fi]' } else { '' }))
+    }
+
     if ($rest.Count -gt 0 -and ($rest[0] -eq 'own' -or $rest[0] -eq '-o' -or $rest[0] -eq '--own')) {
         Write-Host 'Restoring real GPS location (clearing simulated location)...'
         Ensure-AmdsRunning
@@ -1228,6 +1418,7 @@ function Do-Set($rest) {
         Write-Host ("Replaying GPX route: {0}" -f $gpx)
         Log "set gpx $gpx"
         $pyArgs = @('gpx', $gpx)
+        if ($udid) { $pyArgs += $udid }
         if ($intervalSec) { $pyArgs += @('--keep', $intervalSec) }
         & $PY -u $setScript @pyArgs
         return
@@ -1262,6 +1453,7 @@ function Do-Set($rest) {
     Write-Host ("Setting simulated location: {0}, {1}" -f $latV, $lngV)
     Log "set $latV $lngV"
     $pyArgs = @([string]$latV, [string]$lngV)
+    if ($udid) { $pyArgs += $udid }
     if ($intervalSec) { $pyArgs += @('--keep', $intervalSec) }
     & $PY -u $setScript @pyArgs
 }
@@ -1305,14 +1497,21 @@ function Show-Help {
     Write-Host '  flc drivers install|-i         Install drivers (offline MSI if present, else download)'
     Write-Host '  flc drivers uninstall|-u [--clear]  Uninstall driver; --clear also wipes Lockdown plists'
     Write-Host ''
-    Write-Host '  flc devices list|-l            List connected Apple devices'
+    Write-Host '  flc devices list|-l            List connected Apple devices (USB and Wi-Fi)'
     Write-Host '  flc devices connect|-c         Start service and request pairing (tap Trust on iPhone)'
     Write-Host '  flc devices disconnect|-d      Release connections (stop the service)'
     Write-Host '  flc devices reconnect|-r       Restart the service and re-list devices'
     Write-Host ''
+    Write-Host '  flc wifi status|-s            Show wireless state: Bonjour, Wi-Fi syncing, Wi-Fi devices'
+    Write-Host '  flc wifi on|-o                Enable Wi-Fi syncing on the iPhone (once, while on USB)'
+    Write-Host '  flc wifi off|-f               Disable Wi-Fi syncing again'
+    Write-Host '  flc wifi list|-l              List iPhones currently visible over Wi-Fi'
+    Write-Host '  flc wifi browse|-b            Browse the local network for iPhones (Bonjour)'
+    Write-Host '  flc wifi pair|-p [name]       Pair an iPhone over Wi-Fi (RemotePairing, Developer Mode)'
+    Write-Host ''
     Write-Host '  flc ddi status|-s             Show offline Developer Disk Image and device state'
     Write-Host '  flc ddi sync                  Copy the offline DDI into the local cache'
-    Write-Host '  flc ddi install|-i            Install the DDI on the iPhone (one-time per device/iOS)'
+    Write-Host '  flc ddi install|-i [UDID]     Install the DDI on the iPhone (one-time per device/iOS)'
     Write-Host ''
     Write-Host '  flc set <lat> <lng>            Set and HOLD a location (two numbers, e.g. 23.137106 113.331353)'
     Write-Host '  flc set <lat> <lng> --keep <sec>  Custom hold/re-apply interval (1-3600s, default 15s)'
@@ -1323,10 +1522,11 @@ function Show-Help {
     Write-Host '  flc set own|-o                 Clear simulation and restore the real location'
     Write-Host '  (  named form still works: flc set -Lat 23.137106 -Lng 113.331353 )'
     Write-Host '  (  short form of --keep: -k <sec> )'
+    Write-Host '  (  wireless: add --wifi|-w, or pick one device with --udid|-U <UDID> )'
     Write-Host ''
     Write-Host '  flc help|-h                    Show this help'
     Write-Host ''
-    Write-Host 'Typical first-time use:'
+    Write-Host 'Typical first-time use (USB):'
     Write-Host '  flc configure'
     Write-Host '  flc make'
     Write-Host '  flc drivers install     (administrator)'
@@ -1334,6 +1534,12 @@ function Show-Help {
     Write-Host '  flc set 23.137106 113.331353'
     Write-Host '  flc set gpx route.gpx'
     Write-Host '  flc set own'
+    Write-Host ''
+    Write-Host 'Go cable-free (Wi-Fi), after the iPhone is trusted on USB:'
+    Write-Host '  flc wifi on             (enables Wi-Fi syncing on the iPhone)'
+    Write-Host '  flc wifi list           (the iPhone must appear here after unplugging)'
+    Write-Host '  flc set 23.137106 113.331353 --wifi'
+    Write-Host '  flc set own --wifi'
     Write-Host ''
 }
 
@@ -1358,7 +1564,8 @@ switch -Regex ($group) {
     '^(server)$'         { Do-Server $rest }
     '^(drivers)$'        { Do-Drivers $rest }
     '^(devices)$'        { Do-Devices $rest[0] }
-    '^(ddi)$'            { Do-Ddi $rest[0] }
+    '^(wifi|network)$'   { Do-Wifi $rest }
+    '^(ddi)$'            { Do-Ddi $rest }
     '^(set)$'            { Do-Set $rest }
     '^(help|-h|--help)$' { Show-Help }
     default { Write-Host ("Unknown command: " + $group); Write-Host 'Run: flc help'; exit 1 }

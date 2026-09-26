@@ -18,6 +18,10 @@ Usage:
 
 The --keep (or -k) flag overrides the default 15-second re-apply interval
 (allowed range 1-3600 seconds).
+
+Wireless (no cable): pass --wifi (or -w) to use the iPhone that usbmux currently
+exposes over Wi-Fi, or --udid <UDID> (or -U) to target one specific device. Both
+work for USB too; the userspace tunnel is built the same way either way.
 """
 import asyncio
 import sys
@@ -119,13 +123,35 @@ def gpx_last_point(path):
         return None
 
 
+def pick_network_udid():
+    """Return the UDID of an iPhone usbmux currently exposes over Wi-Fi, or None."""
+    try:
+        import asyncio
+
+        from pymobiledevice3.usbmux import list_devices
+
+        async def _pick():
+            for dev in await list_devices():
+                if dev.is_network:
+                    return dev.serial
+            return None
+
+        return asyncio.run(_pick())
+    except Exception as ex:
+        print(f"[flc] Could not list Wi-Fi devices: {type(ex).__name__}: {ex}")
+        return None
+
+
 def parse_args(argv):
-    """Return (mode, target, udid, interval). mode is 'point' (target=(lat,lng)) or 'gpx' (target=path).
+    """Return (mode, target, udid, interval, wifi). mode is 'point' (target=(lat,lng)) or 'gpx' (target=path).
 
     interval (seconds) comes from --keep/-k; None means use the default.
+    --wifi/-w selects the device visible over Wi-Fi; --udid/-U targets one device.
     """
     argv = list(argv)
     interval = None
+    udid = None
+    wifi = False
     clean = []
     i = 0
     while i < len(argv):
@@ -139,6 +165,15 @@ def parse_args(argv):
                 print(f"Invalid keep value: {argv[i + 1]}. Use seconds, e.g. --keep 5")
                 return None
             i += 2
+        elif argv[i] in ('--udid', '-U'):
+            if i + 1 >= len(argv):
+                print("Missing value for --udid.")
+                return None
+            udid = argv[i + 1]
+            i += 2
+        elif argv[i] in ('--wifi', '-w'):
+            wifi = True
+            i += 1
         else:
             clean.append(argv[i])
             i += 1
@@ -160,8 +195,9 @@ def parse_args(argv):
             print("GPX mode requires a file path: flc set gpx route.gpx")
             return None
         path = argv[2]
-        udid = argv[3] if len(argv) > 3 else None
-        return ("gpx", path, udid, interval)
+        if len(argv) > 3 and argv[3]:
+            udid = argv[3]
+        return ("gpx", path, udid, interval, wifi)
     if first in ("point", "--point"):
         if len(argv) < 4:
             print("Point mode requires latitude and longitude.")
@@ -171,8 +207,9 @@ def parse_args(argv):
         except ValueError:
             print("Invalid coordinates. Use decimal numbers, e.g. 23.137106 113.331353")
             return None
-        udid = argv[4] if len(argv) > 4 else None
-        return ("point", (lat, lng), udid, interval)
+        if len(argv) > 4 and argv[4]:
+            udid = argv[4]
+        return ("point", (lat, lng), udid, interval, wifi)
     # bare coordinates: <lat> <lng>
     if len(argv) < 3:
         print("Please provide both latitude and longitude.")
@@ -183,8 +220,9 @@ def parse_args(argv):
     except ValueError:
         print("Invalid coordinates. Use decimal numbers, e.g. 23.137106 113.331353")
         return None
-    udid = argv[3] if len(argv) > 3 else None
-    return ("point", (lat, lng), udid, interval)
+    if len(argv) > 3 and argv[3]:
+        udid = argv[3]
+    return ("point", (lat, lng), udid, interval, wifi)
 
 
 async def hold_point(lat, lng, udid, stop_event, interval):
@@ -261,7 +299,7 @@ async def restore_real_location(udid):
         return False
 
 
-async def run(mode, target, udid, interval):
+async def run(mode, target, udid, interval, wifi=False):
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
@@ -292,7 +330,11 @@ async def run(mode, target, udid, interval):
             if stop_event.is_set():
                 break
             print(f"[flc] {stamp()}  tunnel lost: {ex}")
-            print(f"[flc] reconnecting in {int(RECONNECT_DELAY)}s... (make sure the iPhone is connected and unlocked)")
+            if wifi:
+                print("[flc] keep the iPhone unlocked, on the same Wi-Fi network, screen on - then it reconnects")
+            else:
+                print("[flc] make sure the iPhone is connected and unlocked")
+            print(f"[flc] reconnecting in {int(RECONNECT_DELAY)}s...")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=RECONNECT_DELAY)
             except asyncio.TimeoutError:
@@ -306,9 +348,18 @@ def main():
     parsed = parse_args(sys.argv)
     if parsed is None:
         return 2
-    mode, target, udid, interval = parsed
+    mode, target, udid, interval, wifi = parsed
     if interval is None:
         interval = KEEPALIVE
+    if wifi and not udid:
+        udid = pick_network_udid()
+        if not udid:
+            print("[flc] No iPhone is visible over Wi-Fi right now.")
+            print("[flc] Enable it once with the iPhone on USB:  flc wifi on")
+            print("[flc] (iPhone unlocked, Wi-Fi on, same network as this PC; check with: flc wifi list)")
+            return 2
+    if udid:
+        print(f"[flc] Target device   : {udid}{'  (Wi-Fi)' if wifi else ''}")
     sync_local_ddi()
     if mode == "point":
         lat, lng = target
@@ -321,7 +372,7 @@ def main():
             print(f"GPX file not found: {target}")
             return 2
     try:
-        asyncio.run(run(mode, target, udid, interval))
+        asyncio.run(run(mode, target, udid, interval, wifi))
     except KeyboardInterrupt:
         pass
     return 0
