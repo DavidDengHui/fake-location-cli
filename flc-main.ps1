@@ -258,8 +258,11 @@ function New-StagePython {
 
 function Test-DdiComplete {
     if (-not (Test-Path $DDIDIR)) { return $false }
+    # flc mounts the DDI through cryptexd, which only needs the Cryptex bundle. The
+    # Personalized bundle is optional (only the legacy image mounter reads it) and is
+    # intentionally left out of the portable package to keep it small, so it is not
+    # treated as a requirement here.
     $rel = @(
-        'Xcode_iOS_DDI_Personalized\Image.dmg','Xcode_iOS_DDI_Personalized\BuildManifest.plist','Xcode_iOS_DDI_Personalized\Image.trustcache',
         'Xcode_iOS_DDI_Cryptex\Image.dmg','Xcode_iOS_DDI_Cryptex\BuildManifest.plist','Xcode_iOS_DDI_Cryptex\Image.dmg.trustcache',
         'Xcode_iOS_DDI_Cryptex\Image.dmg.cryptex_info','Xcode_iOS_DDI_Cryptex\Image.dmg.root_hash'
     )

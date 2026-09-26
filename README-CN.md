@@ -26,7 +26,7 @@ flc\
     python\                             精简后的便携 Python 3.12 + pymobiledevice3
     drivers\
       AppleMobileDeviceSupport64.msi    离线 Apple USB 驱动
-    ddi\                                离线开发者镜像（约 32 MB）
+    ddi\                                离线开发者镜像（约 16 MB）
     dist\                               构建材料（仅在执行“flc configure”后出现）
       python-3.12.10.nupkg              官方 NuGet Python 包
       wheels\                           全部定版 wheel（离线安装缓存）
@@ -228,7 +228,7 @@ Bonjour 广播这台手机，它随即以网络设备出现在 `usbmux list` 中
 
 ### ddi — 离线开发者镜像
 
-iOS 17+ 的定位服务要求设备上存在开发者镜像（DDI）。镜像本身（约 32 MB）已**离线
+iOS 17+ 的定位服务要求设备上存在开发者镜像（DDI）。镜像本身（约 16 MB）已**离线
 内置**在 `assets\ddi\`，flc 不会去 GitHub 下载大文件。首次 `set` 前会自动把它复制
 到本地缓存。
 

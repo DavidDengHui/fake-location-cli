@@ -28,7 +28,7 @@ flc\
     python\                             Trimmed portable Python 3.12 + pymobiledevice3
     drivers\
       AppleMobileDeviceSupport64.msi    Offline Apple USB driver
-    ddi\                                Offline Developer Disk Image (~32 MB)
+    ddi\                                Offline Developer Disk Image (~16 MB)
     dist\                               Build materials (only after "flc configure")
       python-3.12.10.nupkg              Official NuGet python package
       wheels\                           All pinned wheels (offline install cache)
@@ -245,7 +245,7 @@ reports it, `flc drivers install` restores it).
 ### ddi — offline Developer Disk Image
 
 iOS 17+ location services require the Developer Disk Image (DDI) to be present on
-the device. The image itself (~32 MB) is **bundled offline** in `assets\ddi\`, so
+the device. The image itself (~16 MB) is **bundled offline** in `assets\ddi\`, so
 flc never performs the big GitHub download. It is copied into the local cache
 automatically before the first `set`.
 
