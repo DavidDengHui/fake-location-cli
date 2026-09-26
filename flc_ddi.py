@@ -88,7 +88,12 @@ async def cmd_install(udid=None):
     from pymobiledevice3.services.cryptexd import CryptexdService
     from pymobiledevice3.exceptions import AlreadyMountedError
     print("[flc] Connecting to the device (userspace tunnel)...")
-    rsd = await userspace_tunnel.establish_userspace_rsd(serial=udid)
+    try:
+        rsd = await userspace_tunnel.establish_userspace_rsd(serial=udid)
+    except Exception as ex:
+        print(f"[flc] Could not reach the iPhone: {type(ex).__name__}: {ex}")
+        print("[flc] Connect it (USB or Wi-Fi), unlock and trust it, then run: flc ddi install")
+        return 1
     try:
         info = await CryptexdService(rsd).auto_install_ddi()
         print(f"[flc] Developer disk image installed: {info.identifier} {info.version}")
@@ -111,10 +116,10 @@ def main(argv):
         return 0
     if cmd in ("install", "-i"):
         try:
-            asyncio.run(cmd_install(udid))
+            return asyncio.run(cmd_install(udid))
         except KeyboardInterrupt:
-            pass
-        return 0
+            print("[flc] Cancelled.")
+            return 1
     print(f"Unknown ddi action: {cmd}")
     print(__doc__)
     return 2

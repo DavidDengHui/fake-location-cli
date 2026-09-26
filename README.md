@@ -52,7 +52,7 @@ The `wintun` tunnel driver is already bundled inside the pymobiledevice3 package
 - Windows 10 / 11 (64-bit).
 - An iPhone on **iOS 17 or newer** (tested on iOS 17–27).
 - A USB data cable for the first pairing. Afterwards the same iPhone also works
-  **over Wi-Fi, with no cable** (`flc wifi on`).
+  **over Wi-Fi, with no cable** (`flc devices wifi`).
 - Administrator rights only for: installing the driver, and starting/stopping
   the Apple service. Setting a location itself does **not** need administrator,
   over USB or over Wi-Fi.
@@ -114,25 +114,22 @@ Once the iPhone has been trusted on USB (steps 1–3 above), the cable is option
 
 1. With the iPhone still on USB and unlocked, run:
    ```
-   flc wifi on
+   flc devices wifi
    ```
-   This switches on Wi-Fi syncing on the iPhone — the same setting iTunes/Finder
-   exposes. Once per iPhone-and-PC pair is enough.
+   This switches on Wi-Fi for the iPhone — the same setting iTunes/Finder
+   exposes. Once per iPhone-and-PC pair is enough. (`flc devices wifi off`
+   switches it back off.)
 2. Unplug the cable. Keep the iPhone **unlocked** and on the **same Wi-Fi
-   network** as this PC, with Wi-Fi (and Bluetooth) on. `flc wifi status` tells
-   you whether the Bonjour/mDNS service the discovery relies on is running.
-3. Confirm the iPhone is discovered:
+   network** as this PC, with Wi-Fi (and Bluetooth) on. `flc devices list` shows
+   it as a `Wi-Fi` device; `flc server status` reports whether the Bonjour/mDNS
+   service the discovery relies on is running.
+3. Set the location — no extra flag needed when there is no iPhone on USB:
    ```
-   flc wifi list
+   flc set 23.137106 113.331353
    ```
-4. Set the location over Wi-Fi — just add `--wifi`:
-   ```
-   flc set 23.137106 113.331353 --wifi
-   flc set gpx data\example-route.gpx --wifi
-   flc set own --wifi
-   ```
-   Holding the spot, Ctrl+C, GPX replay and `--keep` all behave exactly as they
-   do over USB. With several iPhones on the network, choose one with
+   With an iPhone on USB *and* one over Wi-Fi, add `--wifi` to pick the wireless
+   one. Holding the spot, Ctrl+C, GPX replay and `--keep` all behave exactly as
+   they do over USB. With several iPhones on the network, choose one with
    `--udid <UDID>` (UDIDs are listed by `flc devices list`).
 
 If the iPhone never shows up, see the wireless items in
@@ -212,35 +209,25 @@ works by running `flc.cmd` directly even if it is not on the PATH.
 | `flc drivers install` | `-i` | Install the driver silently (offline `.msi` if present, otherwise download it). Administrator. |
 | `flc drivers uninstall` | `-u` | Uninstall Apple Mobile Device Support (Apple Mobile Device Service + USB Driver). Add `--clear` to also wipe **all** Lockdown plists (including SystemConfiguration). Administrator. |
 
-### devices — connected iPhones
+### devices — iPhones (USB and Wi-Fi)
+
+Everything about the iPhone lives here, wired and wireless alike.
 
 | Command | Alias | Meaning |
 |---|---|---|
-| `flc devices list` | `-l` | List connected Apple devices (name, model, iOS, UDID, USB/Wi-Fi). |
+| `flc devices list` | `-l` | List iPhones with name, model, iOS, UDID and how they are attached (USB / Wi-Fi). |
 | `flc devices connect` | `-c` | Start the Apple service and send a pairing request (tap Trust on the iPhone). Administrator. |
+| `flc devices wifi [on\|off]` | `-w` | Turn Wi-Fi use on/off for the iPhone (once, while it is on USB). On = the cable can stay unplugged afterwards; `off` returns to USB-only. |
+| `flc devices browse` | `-b` | Browse the local network for iPhones with Bonjour — useful before one shows up in `flc devices list`. |
+| `flc devices pair [name]` | `-p` | Pair an iPhone over Wi-Fi directly (RemotePairing). Needs Developer Mode on the iPhone; pick the device in the list and type the code shown here on the iPhone. |
 | `flc devices disconnect` | `-d` | Stop the Apple service, releasing all iPhone connections. Administrator. |
 | `flc devices reconnect` | `-r` | Restart the Apple service and re-list devices (handy after a glitch). Administrator. |
 
-### wifi — wireless (cable-free) iPhone
-
-flc can talk to the iPhone over Wi-Fi instead of USB. Apple Mobile Device Support
-announces the iPhone over Bonjour, it then appears in `usbmux list` as a network
-device, and the same userspace tunnel is built — still with **no administrator
-rights**, and no tunneld.
-
-| Command | Alias | Meaning |
-|---|---|---|
-| `flc wifi status` | `-s` | Show the Bonjour/mDNS service, whether Wi-Fi syncing is enabled on the iPhone, and the iPhones visible over Wi-Fi. |
-| `flc wifi on` | `-o` | Enable Wi-Fi syncing on the iPhone (once, while it is on USB). Afterwards the cable can stay unplugged. |
-| `flc wifi off` | `-f` | Disable Wi-Fi syncing again (USB connection required). |
-| `flc wifi list` | `-l` | List the iPhones currently visible over Wi-Fi. |
-| `flc wifi browse` | `-b` | Browse the local network for iPhones with Bonjour — useful before they show up in `flc wifi list`. |
-| `flc wifi pair [name]` | `-p` | Pair an iPhone over Wi-Fi directly (RemotePairing). Needs Developer Mode on the iPhone; pick the device in the list and type the code shown here on the iPhone. |
-
-Requirements for Wi-Fi use: the iPhone was trusted on this PC at least once, is
-**unlocked**, and is on the **same Wi-Fi network**; the **Bonjour Service**
-installed with Apple Mobile Device Support must be running (`flc wifi status`
-reports it, `flc drivers install` restores it).
+Over Wi-Fi the same userspace tunnel is built as over USB — still with **no
+administrator rights** and no tunneld. Requirements: the iPhone was trusted on
+this PC at least once, is **unlocked**, and is on the **same Wi-Fi network**; the
+**Bonjour Service** installed with Apple Mobile Device Support must be running
+(`flc server status` reports it, `flc drivers install` restores it).
 
 ### ddi — offline Developer Disk Image
 
@@ -445,22 +432,32 @@ PC to rebuild the portable runtime.
   PC is conflicting or corrupt. Run `flc server kill --pair` (short `-p`) as
   administrator, then replug the phone, tap "Trust" on the iPhone, and run
   `flc ddi install`.
-- **`flc wifi list` shows nothing / `flc set --wifi` says no iPhone is visible** —
-  the iPhone must have been trusted on this PC at least once over USB, be
-  unlocked, and be on the same Wi-Fi network. Run `flc wifi on` while it is on
-  USB, then `flc wifi status`: the **Bonjour Service** has to be Running
-  (reinstall/repair with `flc drivers install`). `flc wifi browse` shows what
-  Bonjour sees right now; `flc devices reconnect` refreshes the Apple service.
+- **`flc devices list` shows nothing over Wi-Fi / `flc set --wifi` says no iPhone
+  is visible** — the iPhone must have been trusted on this PC at least once over
+  USB, be unlocked, and be on the same Wi-Fi network. Run `flc devices wifi`
+  while it is on USB, then `flc server status`: the **Bonjour Service** has to be
+  Running (reinstall/repair with `flc drivers install`). `flc devices browse`
+  shows what Bonjour sees right now; `flc devices reconnect` refreshes the Apple
+  service.
 - **The connection drops when the iPhone locks** — expected: iOS suspends Wi-Fi
   syncing while the phone is locked or asleep. Unlock it and flc rebuilds the
   tunnel and resumes holding by itself.
 - **A different iPhone keeps being picked** — target one device explicitly:
   `flc set <lat> <lng> --udid <UDID>` (UDIDs are listed by `flc devices list`).
-- **`flc wifi pair` finds no device** — turn on Developer Mode on the iPhone
+- **`flc devices pair` finds no device** — turn on Developer Mode on the iPhone
   (Settings → Privacy & Security → Developer Mode) and keep it on the same Wi-Fi.
   The normal path needs no pairing code at all: pair once over USB, then
-  `flc wifi on`.
-- **Logs** — see `logs\flc.log` and `logs\amds-install.log`.
+  `flc devices wifi`.
+- **`Coordinates out of range`** — latitude must be between -90 and 90 and
+  longitude between -180 and 180 (decimal degrees, latitude first). flc rejects
+  anything outside that, and also rejects values it cannot read as real numbers
+  (empty input is never treated as 0,0). GPX files are checked the same way,
+  point by point, before the replay starts.
+- **Logs** — every command is recorded in `logs\flc.log` as
+  `date time  [LEVEL] message`, with the levels `CMD` (the command line as typed),
+  `INFO` (progress), `WARN` (recoverable problem) and `ERROR` (the command
+  failed). The file is rotated at 2 MB (one backup, `flc.log.1`). Driver installs
+  also write `logs\amds-install.log`.
 
 ---
 

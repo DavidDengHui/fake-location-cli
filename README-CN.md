@@ -49,7 +49,7 @@ flc\
 - Windows 10 / 11（64 位）。
 - **iOS 17 或更新**的 iPhone（已在 iOS 17–27 测试）。
 - USB 数据线（首次配对时使用）。配好之后，同一台 iPhone 也可以**走 Wi-Fi、不用数据线**
-  （`flc wifi on`）。
+  （`flc devices wifi`）。
 - 仅以下操作需要管理员权限：安装驱动、启动/停止 Apple 服务。修改定位本身**不需要**
   管理员权限（USB 与 Wi-Fi 均如此）。
 
@@ -105,25 +105,20 @@ iPhone 用 USB 完成一次信任（上面的第 1–3 步）之后，数据线�
 
 1. iPhone 仍插着数据线并保持解锁，然后运行：
    ```
-   flc wifi on
+   flc devices wifi
    ```
-   它会打开 iPhone 的 Wi-Fi 同步开关（就是 iTunes/Finder 里那个开关）。每台 iPhone
-   与这台电脑之间只需做一次。
+   它会打开 iPhone 的 Wi-Fi 开关（就是 iTunes/Finder 里那个开关）。每台 iPhone 与这台
+   电脑之间只需做一次；`flc devices wifi off` 可以关掉，回到只用数据线。
 2. 拔掉数据线。让 iPhone 保持**解锁**状态，与电脑在**同一个 Wi-Fi 网络**下，并且打开
-   Wi-Fi（与蓝牙）。`flc wifi status` 会告诉你发现设备所依赖的 Bonjour/mDNS 服务是否
-   在运行。
-3. 确认电脑已经发现这台 iPhone：
+   Wi-Fi（与蓝牙）。`flc devices list` 会把它显示为 `Wi-Fi` 设备，`flc server status`
+   会告诉你发现设备所依赖的 Bonjour/mDNS 服务是否在运行。
+3. 直接设置位置即可——没有 iPhone 插在 USB 上时，会自动用无线那台：
    ```
-   flc wifi list
+   flc set 23.137106 113.331353
    ```
-4. 用 Wi-Fi 设置位置——只要加上 `--wifi`：
-   ```
-   flc set 23.137106 113.331353 --wifi
-   flc set gpx data\example-route.gpx --wifi
-   flc set own --wifi
-   ```
-   位置保持、Ctrl+C、GPX 回放和 `--keep` 的行为与 USB 完全一致。网络里有多台 iPhone 时，
-   用 `--udid <UDID>` 指定一台（`flc devices list` 会列出 UDID）。
+   如果同时有 USB 和无线两台，加 `--wifi` 指定无线那台。位置保持、Ctrl+C、GPX 回放和
+   `--keep` 的行为与 USB 完全一致。网络里有多台 iPhone 时，用 `--udid <UDID>` 指定一台
+   （`flc devices list` 会列出 UDID）。
 
 如果 iPhone 始终不出现，请看[第 6 节常见问题](#6-常见问题)里的无线部分。
 
@@ -198,33 +193,24 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 | `flc drivers install` | `-i` | 静默安装驱动（有离线 `.msi` 则用之，否则先下载）。需要管理员。 |
 | `flc drivers uninstall` | `-u` | 卸载 Apple Mobile Device Support（Apple Mobile Device Service + USB Driver）。加 `--clear` 同时清空 Lockdown 下**全部**配对 plist（含 SystemConfiguration）。需要管理员。 |
 
-### devices — 已连接的 iPhone
+### devices — iPhone（USB 与 Wi-Fi）
+
+关于 iPhone 的一切都在这里，有线和无线都一样。
 
 | 命令 | 别名 | 含义 |
 |---|---|---|
-| `flc devices list` | `-l` | 列出已连接的 Apple 设备（名称、型号、iOS、UDID、USB/Wi-Fi）。 |
+| `flc devices list` | `-l` | 列出 iPhone 的名称、型号、iOS、UDID 以及接入方式（USB / Wi-Fi）。 |
 | `flc devices connect` | `-c` | 启动 Apple 服务并发起配对请求（在 iPhone 上点信任）。需要管理员。 |
+| `flc devices wifi [on\|off]` | `-w` | 打开/关闭 iPhone 的 Wi-Fi 使用（仅一次，此时需插着数据线）。打开后就可以不插线；`off` 回到只用数据线。 |
+| `flc devices browse` | `-b` | 用 Bonjour 搜索局域网里的 iPhone——在它还没出现在 `flc devices list` 时很有用。 |
+| `flc devices pair [名称]` | `-p` | 直接通过 Wi-Fi 配对 iPhone（RemotePairing）。需要 iPhone 开启开发者模式；在列表里选设备，并把电脑上显示的配对码输入到 iPhone。 |
 | `flc devices disconnect` | `-d` | 停止 Apple 服务，释放所有 iPhone 连接。需要管理员。 |
 | `flc devices reconnect` | `-r` | 重启 Apple 服务并重新列出设备（出问题时很有用）。需要管理员。 |
 
-### wifi — 无线连接 iPhone（不用数据线）
-
-flc 可以走 Wi-Fi 与 iPhone 通信，而不必插数据线。Apple Mobile Device Support 会通过
-Bonjour 广播这台手机，它随即以网络设备出现在 `usbmux list` 中，之后建立的是同一套用户态
-隧道——同样**不需要管理员权限**，也不需要后台 tunneld。
-
-| 命令 | 别名 | 含义 |
-|---|---|---|
-| `flc wifi status` | `-s` | 查看 Bonjour/mDNS 服务、iPhone 上的 Wi-Fi 同步是否已开启，以及当前通过 Wi-Fi 可见的 iPhone。 |
-| `flc wifi on` | `-o` | 打开 iPhone 的 Wi-Fi 同步（仅一次，此时需要插着数据线）。之后就可以不插线使用。 |
-| `flc wifi off` | `-f` | 关闭 Wi-Fi 同步（需要 USB 连接）。 |
-| `flc wifi list` | `-l` | 列出当前通过 Wi-Fi 可见的 iPhone。 |
-| `flc wifi browse` | `-b` | 用 Bonjour 搜索局域网里的 iPhone——在它还没出现在 `flc wifi list` 时很有用。 |
-| `flc wifi pair [名称]` | `-p` | 直接通过 Wi-Fi 配对 iPhone（RemotePairing）。需要 iPhone 开启开发者模式；在列表里选设备，并把电脑上显示的配对码输入到 iPhone。 |
-
-无线使用的前提：这台 iPhone 已在这台电脑上用 USB 信任过至少一次，手机**已解锁**，且与电脑
-在**同一个 Wi-Fi 网络**；同时 Apple Mobile Device Support 安装的 **Bonjour 服务**必须处于
-运行状态（`flc wifi status` 会报告，`flc drivers install` 可修复）。
+走 Wi-Fi 时建立的是与 USB 相同的用户态隧道——同样**不需要管理员权限**，也不需要后台
+tunneld。无线使用的前提：这台 iPhone 已在这台电脑上用 USB 信任过至少一次，手机**已解锁**，
+且与电脑在**同一个 Wi-Fi 网络**；同时 Apple Mobile Device Support 安装的 **Bonjour 服务**
+必须处于运行状态（`flc server status` 会报告，`flc drivers install` 可修复）。
 
 ### ddi — 离线开发者镜像
 
@@ -396,19 +382,25 @@ point 4>
   [GPX 回放](#gpx-回放)。用内置的 `data\example-route.gpx` 可验证该功能。
 - **端口 49151 已被占用** —— 已有 tunneld 在运行，执行 `flc server kill`。
 - **配对 / DDI 安装报 usbmux 错误 183** —— 电脑上的旧配对记录冲突或损坏。以管理员运行 `flc server kill --pair`（短选项 `-p`），随后重插手机、在 iPhone 上重新点「信任」，再运行 `flc ddi install`。
-- **`flc wifi list` 什么都没有 / `flc set --wifi` 提示看不到 iPhone** —— 这台 iPhone 必须
-  已在这台电脑上用 USB 信任过至少一次、处于解锁状态，并与电脑在同一个 Wi-Fi 网络。插着
-  数据线时运行一次 `flc wifi on`，再看 `flc wifi status`：**Bonjour 服务**必须是 Running
-  （可用 `flc drivers install` 修复）。`flc wifi browse` 能显示此刻 Bonjour 看到的东西，
-  `flc devices reconnect` 可刷新 Apple 服务。
+- **`flc devices list` 里没有无线设备 / `flc set --wifi` 提示看不到 iPhone** —— 这台
+  iPhone 必须已在这台电脑上用 USB 信任过至少一次、处于解锁状态，并与电脑在同一个 Wi-Fi
+  网络。插着数据线时运行一次 `flc devices wifi`，再看 `flc server status`：**Bonjour
+  服务**必须是 Running（可用 `flc drivers install` 修复）。`flc devices browse` 能显示
+  此刻 Bonjour 看到的东西，`flc devices reconnect` 可刷新 Apple 服务。
 - **手机锁屏后无线连接断开** —— 正常现象：iOS 在锁屏/休眠时会挂起 Wi-Fi 同步。解锁手机，
   flc 会自动重建隧道并继续维持。
 - **总是连到另一台 iPhone** —— 用 `--udid <UDID>` 明确指定设备
   （UDID 由 `flc devices list` 列出）。
-- **`flc wifi pair` 搜不到设备** —— 打开 iPhone 的开发者模式
+- **`flc devices pair` 搜不到设备** —— 打开 iPhone 的开发者模式
   （设置 → 隐私与安全性 → 开发者模式），并让它和电脑在同一个 Wi-Fi 下。常规路径其实
-  不需要任何配对码：用 USB 配对一次，然后 `flc wifi on`。
-- **日志** —— 见 `logs\flc.log` 和 `logs\amds-install.log`。
+  不需要任何配对码：用 USB 配对一次，然后 `flc devices wifi`。
+- **提示「Coordinates out of range」** —— 纬度必须在 -90 到 90 之间，经度在 -180 到 180
+  之间（十进制度，纬度在前）。超出范围会被拒绝；读不出真实数值的输入也会被拒绝，空输入
+  不会被当成 0,0。GPX 文件同样会逐点校验，回放前就报错。
+- **日志** —— 每条命令都会记入 `logs\flc.log`，格式为
+  `日期 时间  [级别] 内容`，级别有 `CMD`（输入的命令行）、`INFO`（正常进展）、
+  `WARN`（可恢复的问题）、`ERROR`（命令失败）。日志超过 2 MB 会自动轮转（保留一份
+  `flc.log.1`）。驱动安装另有 `logs\amds-install.log`。
 
 ---
 

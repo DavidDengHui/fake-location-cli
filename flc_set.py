@@ -24,6 +24,7 @@ exposes over Wi-Fi, or --udid <UDID> (or -U) to target one specific device. Both
 work for USB too; the userspace tunnel is built the same way either way.
 """
 import asyncio
+import math
 import sys
 import time
 import signal
@@ -111,16 +112,41 @@ async def ensure_ddi(rsd):
         print("[flc] (continuing - if location commands fail, run 'flc ddi install' once)")
 
 
-def gpx_last_point(path):
-    """Return the last track/route point in a GPX file (or None)."""
+def gpx_points(path):
+    """Return every point of a GPX file, or None if it cannot be parsed.
+
+    Points outside the valid WGS-84 range are rejected (a route file is replayed
+    verbatim, so a stray out-of-range value would make the device refuse it).
+    """
     try:
         import gpxpy
+
         with open(path, "r", encoding="utf-8") as f:
             gpx = gpxpy.parse(f)
         points = list(gpx.walk(only_points=True))
-        return points[-1] if points else None
-    except Exception:
+    except Exception as ex:
+        print(f"[flc] Could not read the GPX file: {ex}")
         return None
+    if not points:
+        print("[flc] No track points found in the GPX file.")
+        return None
+    for i, p in enumerate(points):
+        if not (math.isfinite(p.latitude) and math.isfinite(p.longitude)):
+            print(f"[flc] Point {i + 1} is not a real number: {p.latitude}, {p.longitude}")
+            return None
+        if not (-90.0 <= p.latitude <= 90.0 and -180.0 <= p.longitude <= 180.0):
+            print(
+                f"[flc] Point {i + 1} is out of range (lat {p.latitude}, lng {p.longitude}); "
+                "latitude must be -90..90 and longitude -180..180."
+            )
+            return None
+    return points
+
+
+def gpx_last_point(path):
+    """Return the last track/route point in a GPX file (or None)."""
+    points = gpx_points(path)
+    return points[-1] if points else None
 
 
 def pick_network_udid():
@@ -363,13 +389,19 @@ def main():
     sync_local_ddi()
     if mode == "point":
         lat, lng = target
+        if not (math.isfinite(lat) and math.isfinite(lng)):
+            print("Invalid coordinates: latitude and longitude must be real numbers.")
+            return 2
         if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
-            print("Coordinates out of range.")
+            print("Coordinates out of range: latitude must be -90..90 and longitude -180..180.")
             return 2
     else:
         import os
         if not os.path.isfile(target):
             print(f"GPX file not found: {target}")
+            return 2
+        # Validate every point before opening a tunnel, so a bad file fails fast.
+        if gpx_points(target) is None:
             return 2
     try:
         asyncio.run(run(mode, target, udid, interval, wifi))
