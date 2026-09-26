@@ -606,14 +606,33 @@ function Invoke-MakeUninstall($opts) {
         Write-Host "Not in user PATH: $ROOT"
     }
 
+    $removeDriver = $false
+    if (-not $assumeYes) {
+        Write-Host ''
+        Write-Host 'Also remove the Apple USB driver? This uninstalls the Apple Mobile'
+        Write-Host 'Device Service and the Apple Mobile Device USB Driver, and clears'
+        Write-Host 'all pairing records in C:\ProgramData\Apple\Lockdown.'
+        $ansD = (Read-Host "Remove the driver and pairing records? [y/N]").Trim()
+        if ($ansD -match '^(y|yes)$') { $removeDriver = $true }
+    }
+    if ($removeDriver) {
+        if (Test-Admin) {
+            Uninstall-Drivers -ClearAll
+        } else {
+            Write-Host 'Driver removal needs administrator rights. Approve the UAC prompt (click Yes)...'
+            $null = Invoke-ElevatedWait 'drivers uninstall --clear'
+            Write-Host 'Driver removal finished.'
+        }
+    }
+
     $del = $false
     if ($assumeYes) { $del = $true }
     else {
         Write-Host ''
-        Write-Host 'Also permanently DELETE the entire tool folder and all its contents?'
+        Write-Host 'Also permanently delete the entire tool folder and all its contents?'
         Write-Host ("  " + $ROOT)
-        $ans = (Read-Host "Type DELETE to erase the folder, or press Enter to keep it").Trim()
-        if ($ans -eq 'DELETE') { $del = $true }
+        $ans = (Read-Host "Delete the folder? [y/N]").Trim()
+        if ($ans -match '^(y|yes)$') { $del = $true }
     }
 
     if ($del) {
@@ -726,6 +745,21 @@ function Invoke-MakeUpdate($opts) {
     Write-Host ''
     Write-Host 'Sources updated. Your assets\, data\ and logs\ were kept.'
     Write-Host 'A runtime rebuild is only needed if the dependencies change: flc make'
+
+    Write-Host ''
+    Write-Host 'Clearing old pairing records so the updated code re-pairs cleanly...'
+    [void](Clear-LockdownPlist)
+    $lockdown = Join-Path $env:ProgramData 'Apple\Lockdown'
+    $stillHas = $false
+    if (Test-Path $lockdown) {
+        $stillHas = @(Get-ChildItem $lockdown -Filter '*.plist' -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'SystemConfiguration.plist' }).Count -gt 0
+    }
+    if ($stillHas -and -not (Test-Admin)) {
+        Write-Host 'Clearing pairing records needs administrator rights. Approve the UAC prompt (click Yes)...'
+        $null = Invoke-ElevatedWait 'server kill --pair'
+    }
+    Write-Host 'Pairing records handled. Reconnect and trust the iPhone again if prompted.'
     Log "make update ($source)"
 }
 
@@ -744,11 +778,15 @@ function Do-Make($rest) {
 
 # ---------------- server (status / kill only) ----------------
 
-function Do-Server($action) {
+function Do-Server($srvArgs) {
+    $action = $srvArgs[0]
+    $opts = @()
+    if ($srvArgs.Count -gt 1) { $opts = $srvArgs[1..($srvArgs.Count-1)] }
+    $resetPair = ($opts | Where-Object { $_ -match '^(--pair|-p)$' }).Count -gt 0
     switch -Regex ($action) {
         '^(status|-s)$' { Show-Status }
-        '^(kill|-k)$'   { Do-ServerKill }
-        default { Write-Host 'Unknown server action. Use: flc server status|kill'; exit 1 }
+        '^(kill|-k)$'   { Do-ServerKill $resetPair }
+        default { Write-Host 'Unknown server action. Use: flc server status|kill [--pair]'; exit 1 }
     }
 }
 
@@ -796,7 +834,7 @@ function Show-Status {
     Write-Host '============================================'
 }
 
-function Do-ServerKill {
+function Do-ServerKill($resetPair = $false) {
     if (Invoke-Elevated @($CliArgs)) { return }
     Write-Host 'Stopping conflicting processes...'
     $killed = 0
@@ -824,11 +862,63 @@ function Do-ServerKill {
             Write-Host ("  could not stop PID {0}: {1}" -f $p.ProcessId, $_.Exception.Message)
         }
     }
+    if ($resetPair) { Reset-PairRecords }
     if ($killed -eq 0) { Write-Host 'No conflicting processes found.' }
     else { Write-Host "Done. Stopped $killed process(es)." }
-    Log "server kill ($killed)"
+    Log "server kill (procs=$killed pair=$resetPair)"
 }
 
+# Remove pairing plists from the AMDS Lockdown folder. By default the
+# SystemConfiguration.plist (SystemBUID) is kept so other pairings survive;
+# use -All for a full driver uninstall. Returns the number of files removed.
+function Clear-LockdownPlist([switch]$All) {
+    $lockdown = Join-Path $env:ProgramData 'Apple\Lockdown'
+    if (-not (Test-Path $lockdown)) {
+        Write-Host ('  no Lockdown folder at ' + $lockdown)
+        return 0
+    }
+    $plists = @(Get-ChildItem $lockdown -Filter '*.plist' -Force -ErrorAction SilentlyContinue)
+    if (-not $All) {
+        $plists = @($plists | Where-Object { $_.Name -ne 'SystemConfiguration.plist' })
+    }
+    $n = 0
+    foreach ($fi in $plists) {
+        try {
+            Remove-Item $fi.FullName -Force -ErrorAction Stop
+            $n++
+        } catch {
+            Write-Host ('  could not delete ' + $fi.Name + ': ' + $_.Exception.Message)
+        }
+    }
+    Write-Host ('  cleared ' + $n + ' pair-record file(s) from ' + $lockdown)
+    return $n
+}
+
+function Reset-PairRecords {
+    # Fix usbmux error 183 (Windows ERROR_ALREADY_EXISTS): a stale/corrupt pair
+    # record makes AMDS refuse SavePairRecord. Restart the service and clear
+    # device plists (keep SystemConfiguration.plist / SystemBUID). Elevated.
+    if (-not (Get-Service -Name $AMDS_SERVICE -ErrorAction SilentlyContinue)) {
+        Write-Host '  Apple Mobile Device Service is not installed - nothing to reset.'
+        return
+    }
+    Write-Host 'Resetting pairing records (fixes usbmux error 183)...'
+    try {
+        Stop-Service -Name $AMDS_SERVICE -Force -ErrorAction Stop
+        Write-Host ('  stopped ' + $AMDS_SERVICE)
+    } catch {
+        Write-Host ('  could not stop service: ' + $_.Exception.Message)
+    }
+    Start-Sleep -Milliseconds 800
+    [void](Clear-LockdownPlist)
+    try {
+        Start-Service -Name $AMDS_SERVICE -ErrorAction Stop
+        Write-Host ('  started ' + $AMDS_SERVICE)
+    } catch {
+        Write-Host ('  could not start service: ' + $_.Exception.Message)
+    }
+    Write-Host '  Next: unlock the iPhone, replug it, tap Trust, then run: flc ddi install'
+}
 function Get-DdiState {
     $code = "import sys,json;sys.path.insert(0,r'$ROOT');import flc_ddi;print(json.dumps({'bundled':flc_ddi.bundled_id(),'cache':flc_ddi.cache_ids()}))"
     $line = (& $PY -c $code 2>$null | Select-Object -Last 1)
@@ -843,7 +933,11 @@ function Get-FolderSizeMB($path) {
 
 # ---------------- drivers ----------------
 
-function Do-Drivers($action) {
+function Do-Drivers($drvArgs) {
+    $action = $drvArgs[0]
+    $opts = @()
+    if ($drvArgs.Count -gt 1) { $opts = $drvArgs[1..($drvArgs.Count-1)] }
+    $clearAll = ($opts | Where-Object { $_ -match '^--clear$' }).Count -gt 0
     switch -Regex ($action) {
         '^(list|-l)$' {
             Write-Host 'Required drivers for iPhone USB connectivity:'
@@ -886,7 +980,7 @@ function Do-Drivers($action) {
         }
         '^(uninstall|-u)$' {
             if (Invoke-Elevated @($CliArgs)) { return }
-            Uninstall-Drivers
+            Uninstall-Drivers -ClearAll:$clearAll
         }
         default { Write-Host 'Unknown drivers action. Use: flc drivers list|status|install|uninstall'; exit 1 }
     }
@@ -917,7 +1011,7 @@ function Install-Drivers {
     Log 'drivers install'
 }
 
-function Uninstall-Drivers {
+function Uninstall-Drivers([switch]$ClearAll) {
     Write-Host '=== Uninstalling Apple Mobile Device Support ==='
     $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName -eq 'Apple Mobile Device Support' }
@@ -925,10 +1019,15 @@ function Uninstall-Drivers {
         Write-Host ('Found product: ' + $reg.DisplayName + ' ' + $reg.DisplayVersion)
         $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x',$reg.PSChildName,'/qn','/norestart') -Wait -PassThru
         Write-Host ('msiexec exit code: ' + $p.ExitCode)
+        Start-Sleep -Seconds 2
     } else {
         Write-Host 'Apple Mobile Device Support is not installed.'
     }
-    Log 'drivers uninstall'
+    if ($ClearAll) {
+        Write-Host 'Clearing all pairing records (including SystemConfiguration)...'
+        [void](Clear-LockdownPlist -All)
+    }
+    Log ('drivers uninstall (clear=' + $ClearAll + ')')
 }
 
 # ---------------- devices ----------------
@@ -1192,18 +1291,19 @@ function Show-Help {
     Write-Host 'Setup (download -> build -> install):'
     Write-Host '  flc configure|-c               Download all official dependencies into assets\ (idempotent)'
     Write-Host '  flc make                       Build the minimal runtime from the downloaded materials'
-    Write-Host '  flc make update [gitee|github] Update sources to the latest (Gitee default, no proxy needed)'
+    Write-Host '  flc make update [gitee|github] Update sources (Gitee default), then clear pairing records'
     Write-Host '  flc make clean|-c              Remove assets\ (keep sources only)'
     Write-Host '  flc make install|-i [--prefix=PATH | --p=PATH]  Copy/add to PATH, auto-install USB driver + DDI'
-    Write-Host '  flc make uninstall|-u          Remove from PATH, then optionally delete the whole folder'
+    Write-Host '  flc make uninstall|-u          Remove from PATH; optionally remove driver+pair records, delete folder'
     Write-Host ''
     Write-Host '  flc server status|-s           Show components, service, port and devices'
     Write-Host '  flc server kill|-k             Stop conflicting tunneld/location processes'
+    Write-Host '  flc server kill|-k --pair|-p   Also clear pair records & restart AMDS (fixes error 183)'
     Write-Host ''
     Write-Host '  flc drivers list|-l            List required drivers and whether they are present'
     Write-Host '  flc drivers status|-s          Show whether the drivers are installed'
     Write-Host '  flc drivers install|-i         Install drivers (offline MSI if present, else download)'
-    Write-Host '  flc drivers uninstall|-u       Uninstall the drivers'
+    Write-Host '  flc drivers uninstall|-u [--clear]  Uninstall driver; --clear also wipes Lockdown plists'
     Write-Host ''
     Write-Host '  flc devices list|-l            List connected Apple devices'
     Write-Host '  flc devices connect|-c         Start service and request pairing (tap Trust on iPhone)'
@@ -1255,8 +1355,8 @@ if ($needsPy -and -not (Test-Path $PY)) {
 switch -Regex ($group) {
     '^(configure|-c)$'   { Invoke-Configure }
     '^(make)$'           { Do-Make $rest }
-    '^(server)$'         { Do-Server $rest[0] }
-    '^(drivers)$'        { Do-Drivers $rest[0] }
+    '^(server)$'         { Do-Server $rest }
+    '^(drivers)$'        { Do-Drivers $rest }
     '^(devices)$'        { Do-Devices $rest[0] }
     '^(ddi)$'            { Do-Ddi $rest[0] }
     '^(set)$'            { Do-Set $rest }

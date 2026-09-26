@@ -152,10 +152,10 @@ portable package never needs this command.
 | Command | Alias | Meaning |
 |---|---|---|
 | `flc make` | — | Build the trimmed portable Python from `assets\dist` into `assets\python` (fully offline, no compiler). Run after `flc configure`. |
-| `flc make update` | `--update` | Update to the latest sources from Gitee (default, no proxy) or GitHub (`flc make update github`). Git clones use `git pull`; source-archive installs (no `.git`) download the latest source archive and overwrite sources in place, **keeping `assets\`, `data\` and `logs\`**. |
+| `flc make update` | `--update` | Update to the latest sources from Gitee (default, no proxy) or GitHub (`flc make update github`). Git clones use `git pull`; source-archive installs (no `.git`) download the latest source archive and overwrite sources in place, **keeping `assets\`, `data\` and `logs\`**. After updating, old pair records are **cleared automatically** (SystemConfiguration / SystemBUID kept); just tap "Trust" again on the next connection. |
 | `flc make install` | `-i` | Add this folder to your **user PATH**, then automatically install the USB driver (one UAC prompt), cache the offline DDI, prepare the DDI on a connected phone, and finally print a full `flc server status` summary. |
 | `flc make -i --prefix=PATH` | `--p=PATH` | Copy the whole program (including `assets\`) to PATH and add **that** folder to the user PATH. `-i` is the short install flag and `--p=` the short prefix flag. Example: `flc make -i --p="C:\flc"` (same as `flc make install --prefix="C:\flc"`). |
-| `flc make uninstall` | `-u` | Remove the folder from the user PATH, then ask whether to delete the whole program folder. Add `-y` to answer yes. |
+| `flc make uninstall` | `-u` | Remove the folder from the user PATH; **first ask whether to uninstall the Apple USB driver** (Apple Mobile Device Service + USB Driver) and clear the pair records in `C:\ProgramData\Apple\Lockdown` (elevated if confirmed), then ask whether to delete the whole program folder. Add `-y` to delete the folder directly (it does **not** remove the driver). |
 | `flc make clean` | `-c` | Delete the whole `assets\` folder (built Python, driver, DDI and build materials), leaving only the program sources. Rebuild later with `flc configure` then `flc make`. Asks for `YES`; add `-y` to skip. |
 
 After `flc make install`, open a **new** command window and type `flc help`.
@@ -169,6 +169,7 @@ works by running `flc.cmd` directly even if it is not on the PATH.
 |---|---|---|
 | `flc server status` | `-s` | Show portable Python, pymobiledevice3 version, the Apple service, the tunneld port, the offline driver/DDI, and connected devices. |
 | `flc server kill` | `-k` | Stop conflicting background processes (anything holding tunneld port 49151, and stray `pymobiledevice3 tunneld` / `simulate-location` processes). Administrator. |
+| `flc server kill --pair` | `-p` | In addition to stopping processes, clear stale pair records and restart the Apple Mobile Device Service, to fix usbmux error **183** (a conflicting old pair record) while pairing / installing the DDI. Administrator; afterwards replug the phone, tap "Trust" on the iPhone, and run `flc ddi install`. |
 
 ### drivers — the iPhone USB driver
 
@@ -177,7 +178,7 @@ works by running `flc.cmd` directly even if it is not on the PATH.
 | `flc drivers list` | `-l` | List required drivers and whether an offline installer is bundled. |
 | `flc drivers status` | `-s` | Show whether the driver is installed, the service state, and live USB nodes. |
 | `flc drivers install` | `-i` | Install the driver silently (offline `.msi` if present, otherwise download it). Administrator. |
-| `flc drivers uninstall` | `-u` | Uninstall Apple Mobile Device Support. Administrator. |
+| `flc drivers uninstall` | `-u` | Uninstall Apple Mobile Device Support (Apple Mobile Device Service + USB Driver). Add `--clear` to also wipe **all** Lockdown plists (including SystemConfiguration). Administrator. |
 
 ### devices — connected iPhones
 
@@ -380,17 +381,22 @@ PC to rebuild the portable runtime.
   `data\example-route.gpx` to confirm the feature works.
 - **Port 49151 already in use** — another tunneld is running. Run
   `flc server kill`.
+- **Pairing / DDI install reports usbmux error 183** — an old pair record on the
+  PC is conflicting or corrupt. Run `flc server kill --pair` (short `-p`) as
+  administrator, then replug the phone, tap "Trust" on the iPhone, and run
+  `flc ddi install`.
 - **Logs** — see `logs\flc.log` and `logs\amds-install.log`.
 
 ---
 
 ## 7. Uninstall
 
-- Remove the command from PATH and optionally delete the folder:
-  `flc make uninstall` (it removes the PATH entry, then asks before deleting;
-  `-y` deletes immediately).
-- Remove the iPhone driver (optional): `flc devices disconnect` then
-  `flc drivers uninstall`.
+- Full uninstall: `flc make uninstall`. It removes the PATH entry, then asks
+  whether to uninstall the Apple USB driver and clear pair records (elevated via
+  UAC if confirmed), and finally asks whether to delete the whole folder; `-y`
+  deletes the folder directly (it does **not** remove the driver).
+- To remove only the iPhone USB driver: `flc devices disconnect`, then
+  `flc drivers uninstall --clear` (also clears pair records, administrator).
 
 Uninstalling the driver only removes the Apple USB support on this PC; it does
 not affect the iPhone.

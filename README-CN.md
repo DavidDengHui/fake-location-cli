@@ -141,10 +141,10 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 | 命令 | 别名 | 含义 |
 |---|---|---|
 | `flc make` | — | 用 `assets\dist` 离线构建精简便携 Python 到 `assets\python`（完全离线，无需编译器）。在 `flc configure` 之后运行。 |
-| `flc make update` | `--update` | 从 Gitee（默认，无需代理）或 GitHub（`flc make update github`）更新到最新源码。Git 克隆的仓库直接 `git pull`；源码包安装（无 `.git`）会下载最新源码归档并就地覆盖，**保留 `assets\`、`data\`、`logs\`**。 |
+| `flc make update` | `--update` | 从 Gitee（默认，无需代理）或 GitHub（`flc make update github`）更新到最新源码。Git 克隆的仓库直接 `git pull`；源码包安装（无 `.git`）会下载最新源码归档并就地覆盖，**保留 `assets\`、`data\`、`logs\`**。更新完成后会**自动清空旧配对记录**（保留 SystemConfiguration / SystemBUID），下次连接时在 iPhone 上重新信任即可。 |
 | `flc make install` | `-i` | 把当前文件夹加入**用户 PATH**，随后自动安装 USB 驱动（弹一次 UAC）、缓存离线 DDI、在已连接手机时准备 DDI，最后输出一次完整的 `flc server status` 状态总览。 |
 | `flc make -i --prefix=路径` | `--p=路径` | 把整个程序（含 `assets\`）复制到该路径并加入用户 PATH。`-i` 是 install 短标志，`--p=` 是 prefix 短标志。示例：`flc make -i --p="C:\flc"`（等价于 `flc make install --prefix="C:\flc"`）。 |
-| `flc make uninstall` | `-u` | 从用户 PATH 移除该文件夹，并询问是否删除整个程序文件夹。加 `-y` 表示直接删除。 |
+| `flc make uninstall` | `-u` | 从用户 PATH 移除该文件夹；随后**先询问是否卸载 Apple USB 驱动**（Apple Mobile Device Service + USB Driver）并清空 `C:\ProgramData\Apple\Lockdown` 的配对记录（确认后提权执行），再询问是否删除整个程序文件夹。加 `-y` 直接删除文件夹（**不会**删除驱动）。 |
 | `flc make clean` | `-c` | 删除整个 `assets\` 文件夹（构建好的 Python、驱动、DDI、构建材料），只保留程序源码。之后可用 `flc configure` 再 `flc make` 重建。需输入 `YES`；加 `-y` 跳过确认。 |
 
 执行 `flc make install` 后，**新开**一个命令窗口再输入 `flc help`。
@@ -158,6 +158,7 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 |---|---|---|
 | `flc server status` | `-s` | 查看便携 Python、pymobiledevice3 版本、Apple 服务、tunneld 端口、离线驱动/DDI 及已连接设备。 |
 | `flc server kill` | `-k` | 结束冲突的后台进程（占用 tunneld 端口 49151 的进程，以及残留的 `pymobiledevice3 tunneld` / `simulate-location` 进程）。需要管理员。 |
+| `flc server kill --pair` | `-p` | 在结束进程之外，额外清空旧配对记录并重启 Apple Mobile Device Service，用于修复配对 / 安装 DDI 时报 usbmux 错误 **183**（旧配对记录冲突）。需要管理员；执行后请重插手机、在 iPhone 上重新点「信任」，再运行 `flc ddi install`。 |
 
 ### drivers — iPhone USB 驱动
 
@@ -166,7 +167,7 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 | `flc drivers list` | `-l` | 列出所需驱动，以及是否已内置离线安装包。 |
 | `flc drivers status` | `-s` | 查看驱动是否已安装、服务状态和实时 USB 节点。 |
 | `flc drivers install` | `-i` | 静默安装驱动（有离线 `.msi` 则用之，否则先下载）。需要管理员。 |
-| `flc drivers uninstall` | `-u` | 卸载 Apple Mobile Device Support。需要管理员。 |
+| `flc drivers uninstall` | `-u` | 卸载 Apple Mobile Device Support（Apple Mobile Device Service + USB Driver）。加 `--clear` 同时清空 Lockdown 下**全部**配对 plist（含 SystemConfiguration）。需要管理员。 |
 
 ### devices — 已连接的 iPhone
 
@@ -340,15 +341,18 @@ point 4>
 - **GPX 轨迹不动** —— 文件必须包含 `<trk>` 轨迹（不能只有 `<rte>`/路点），见
   [GPX 回放](#gpx-回放)。用内置的 `data\example-route.gpx` 可验证该功能。
 - **端口 49151 已被占用** —— 已有 tunneld 在运行，执行 `flc server kill`。
+- **配对 / DDI 安装报 usbmux 错误 183** —— 电脑上的旧配对记录冲突或损坏。以管理员运行 `flc server kill --pair`（短选项 `-p`），随后重插手机、在 iPhone 上重新点「信任」，再运行 `flc ddi install`。
 - **日志** —— 见 `logs\flc.log` 和 `logs\amds-install.log`。
 
 ---
 
 ## 7. 卸载
 
-- 从 PATH 移除并按需删除文件夹：`flc make uninstall`（先移除 PATH 条目，再询问是否
-  删除；加 `-y` 立即删除）。
-- （可选）卸载 iPhone 驱动：`flc devices disconnect` 然后 `flc drivers uninstall`。
+- 完整卸载：`flc make uninstall`。它先从 PATH 移除条目，随后询问是否卸载 Apple USB
+  驱动并清空配对记录（确认后弹 UAC 执行），最后询问是否删除整个文件夹；加 `-y` 可
+  直接删除文件夹（**不会**删除驱动）。
+- 只想卸载 iPhone USB 驱动：`flc devices disconnect`，然后
+  `flc drivers uninstall --clear`（同时清空配对记录，需要管理员）。
 
 卸载驱动仅移除本机的 Apple USB 支持，不影响 iPhone。
 
