@@ -8,3 +8,6 @@ __pycache__/
 
 # Packaged release zips
 *.zip
+
+# Release build output (tarballs, signatures, checksums)
+release/
