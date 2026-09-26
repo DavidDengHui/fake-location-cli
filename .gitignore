@@ -11,3 +11,6 @@ __pycache__/
 
 # Release build output (tarballs, signatures, checksums)
 release/
+
+# WorkBuddy workspace data
+.workbuddy/
