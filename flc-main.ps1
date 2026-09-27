@@ -978,6 +978,10 @@ function Do-Drivers($drvArgs) {
                 Write-Host '   Offline installer: NO   (run "flc configure" to download it)'
             }
             Write-Host ''
+            Write-Host '2) Bonjour (Apple mDNS responder) - only needed for Wi-Fi/wireless use'
+            Write-Host ('   ' + (Get-BonjourState))
+            Write-Host '   Not bundled with 1) above; install "Bonjour for Windows" if it is missing.'
+            Write-Host ''
             Write-Host 'Note: the wintun tunnel driver is bundled inside pymobiledevice3 and needs no separate install.'
         }
         '^(status|-s)$' {
@@ -1201,7 +1205,7 @@ function Get-BonjourState {
         if ($svc.Status -eq 'Running') { return 'Running (Wi-Fi discovery available)' }
         return ('stopped - wireless discovery is off ("flc drivers wifi" starts it)')
     }
-    return 'NOT FOUND (iPhone Wi-Fi discovery needs it; run: flc drivers install)'
+    return 'NOT FOUND (not bundled with the Apple driver MSI - install "Bonjour for Windows")'
 }
 
 # Apple's mDNS responder ships as a Manual-start service, so it is very often
@@ -1212,7 +1216,8 @@ function Ensure-BonjourRunning {
     $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
     if (-not $svc) {
         Write-Host 'Bonjour Service is not installed - an iPhone can never be found over Wi-Fi.'
-        Write-Host 'Install the Apple components with:  flc drivers install'
+        Write-Host 'Note: it is NOT part of the Apple Mobile Device Support MSI that flc installs.'
+        Write-Host 'Install "Bonjour for Windows" (or iTunes) from Apple, then run: flc drivers wifi'
         return $false
     }
     if ($svc.Status -eq 'Running') { return $true }

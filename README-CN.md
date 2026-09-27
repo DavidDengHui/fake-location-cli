@@ -209,8 +209,10 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 
 走 Wi-Fi 时建立的是与 USB 相同的用户态隧道——同样**不需要管理员权限**，也不需要后台
 tunneld。无线使用的前提：这台 iPhone 已在这台电脑上用 USB 信任过至少一次，手机**已解锁**，
-且与电脑在**同一个 Wi-Fi 网络**；同时 Apple Mobile Device Support 安装的 **Bonjour 服务**
-必须处于运行状态（`flc server status` 会报告，`flc drivers install` 可修复）。
+且与电脑在**同一个 Wi-Fi 网络**；此外还需要 **Bonjour 服务（Apple 的 mDNS 响应器）**处于
+运行状态。注意它**并不在** flc 安装的 Apple Mobile Device Support 驱动包里，需要单独安装
+（Apple 的 "Bonjour for Windows"，或装 iTunes）。状态可用 `flc drivers list` /
+`flc server status` 查看，用 `flc drivers wifi` 启动。
 
 ### ddi — 离线开发者镜像
 
@@ -389,6 +391,9 @@ point 4>
   启动，停着的时候所有无线发现都会静默返回空，什么都不报错。`flc devices list` 会直接打印
   `mDNS/Bonjour : ...` 一行告诉你当前状态；`flc devices wifi` 会自动把它启动起来（需同意
   一次 UAC 提权），也可以直接以管理员运行 `flc drivers wifi`。
+  若状态显示 NOT FOUND，说明系统里根本没有 Bonjour，需先安装 Apple 的
+  "Bonjour for Windows"——**`flc drivers install` 不会装它**（它只装 Apple Mobile Device
+  Support）。
   `flc devices browse` 能显示此刻 Bonjour 看到的东西，`flc devices reconnect` 可刷新 Apple
   服务。
 - **手机锁屏后无线连接断开** —— 正常现象：iOS 在锁屏/休眠时会挂起 Wi-Fi 同步。解锁手机，
