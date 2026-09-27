@@ -64,6 +64,7 @@ $PYDIR       = Join-Path $ASSETS 'python'
 $PY          = Join-Path $PYDIR 'python.exe'
 $DRIVERDIR   = Join-Path $ASSETS 'drivers'
 $DRIVERMSI   = Join-Path $DRIVERDIR 'AppleMobileDeviceSupport64.msi'
+$BONJOURMSI  = Join-Path $DRIVERDIR 'Bonjour64.msi'
 $DDIDIR      = Join-Path $ASSETS 'ddi'
 $DATADIR     = Join-Path $ROOT 'data'
 $LOGDIR      = Join-Path $ROOT 'logs'
@@ -75,6 +76,13 @@ $AMDS_SERVICE = 'Apple Mobile Device Service'
 $DRIVER_URL   = 'https://swcdn.apple.com/content/downloads/20/49/047-76422/qcw2a7028lr8yp4rdkrfyzkvlhi9q1gg2g/AppleMobileDeviceSupport64.msi'
 $DRIVER_SHA   = 'b60533fb54e7bd81ffc52d99678a9cce04e58cb54a76281bd7b1309f20d360e9'
 $TUNNELD_PORT = 49151
+
+# Bonjour is a SEPARATE Apple MSI - it is not part of Apple Mobile Device
+# Support. Without it an iPhone is never discovered over Wi-Fi. Same official
+# Apple CDN (swcdn.apple.com); hash taken from the Apple.Bonjour 3.1.0.1 manifest.
+$BONJOUR_SERVICE = 'Bonjour Service'
+$BONJOUR_URL = 'https://swcdn.apple.com/content/downloads/52/06/071-03198/djcqm50b49h4o03eetqwowrdpf4o9sx71z/Bonjour64.msi'
+$BONJOUR_SHA = '46E31E284DA64D6C2D366352B8A8ABCF7DB28D3E2A870D8FCF15C4A6FE0A6DD1'
 
 $PY_VERSION = '3.12.10'
 $NUPKG      = Join-Path $DIST ("python-" + $PY_VERSION + ".nupkg")
@@ -347,6 +355,27 @@ function Get-DriverMSI {
     return $true
 }
 
+# Bonjour is a separate MSI from Apple Mobile Device Support; flc needs it only
+# for wireless (Wi-Fi) discovery, so it is fetched on its own and cached the
+# same way.
+function Get-BonjourMSI {
+    if (Test-Path $BONJOURMSI) { return $true }
+    Write-Host 'Downloading Bonjour (mDNS responder) from apple.com (~2.6 MB)...'
+    if (-not (Test-Path $DRIVERDIR)) { New-Item -ItemType Directory -Force -Path $DRIVERDIR | Out-Null }
+    $tmp = $BONJOURMSI + '.part'
+    $ProgressPreference = 'SilentlyContinue'
+    try { curl.exe -L --fail -s -o $tmp $BONJOUR_URL } catch {}
+    if (-not (Test-Path $tmp)) { Write-Host 'Download failed.'; return $false }
+    $h = (Get-FileHash $tmp -Algorithm SHA256).Hash
+    if ($h -ne $BONJOUR_SHA) {
+        Write-Host 'ERROR: downloaded Bonjour hash does not match the official value.'
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    Move-Item $tmp $BONJOURMSI -Force -ErrorAction Stop
+    return $true
+}
+
 # configure: download every official material into assets\ (idempotent).
 function Invoke-Configure {
     Write-Host '=== flc configure ==='
@@ -411,6 +440,14 @@ function Invoke-Configure {
     } else {
         if (Get-DriverMSI) { Write-Host '[ok] Apple driver MSI ready.' }
         else { Write-Host '[FAIL] driver MSI download failed.'; $ok = $false }
+    }
+
+    # 3b) Bonjour MSI - a separate Apple package, needed only for Wi-Fi discovery
+    if (Test-Path $BONJOURMSI) {
+        Write-Host '[skip] Bonjour MSI already present.'
+    } else {
+        if (Get-BonjourMSI) { Write-Host '[ok] Bonjour MSI ready.' }
+        else { Write-Host '[FAIL] Bonjour MSI download failed.'; $ok = $false }
     }
 
     # 4) DDI
@@ -980,7 +1017,13 @@ function Do-Drivers($drvArgs) {
             Write-Host ''
             Write-Host '2) Bonjour (Apple mDNS responder) - only needed for Wi-Fi/wireless use'
             Write-Host ('   ' + (Get-BonjourState))
-            Write-Host '   Not bundled with 1) above; install "Bonjour for Windows" if it is missing.'
+            if (Test-Path $BONJOURMSI) {
+                $bmb = [math]::Round((Get-Item $BONJOURMSI).Length/1MB,1)
+                Write-Host ("   Offline installer: YES  assets\drivers\Bonjour64.msi ($bmb MB)")
+            } else {
+                Write-Host '   Offline installer: NO   (run "flc configure" to download it)'
+            }
+            Write-Host '   Separate MSI from 1); "flc drivers install" installs and starts it.'
             Write-Host ''
             Write-Host 'Note: the wintun tunnel driver is bundled inside pymobiledevice3 and needs no separate install.'
         }
@@ -1047,6 +1090,48 @@ function Install-Drivers {
         Write-Host 'Install finished but the service is not registered. Check logs\amds-install.log'
     }
     Log 'drivers install'
+    # Bonjour is a separate MSI and is what makes wireless discovery possible.
+    [void](Install-Bonjour)
+}
+
+# Bonjour (Apple's mDNS responder) is NOT part of Apple Mobile Device Support -
+# it is a separate MSI. Without its service running, an iPhone is never
+# discovered over Wi-Fi (every lookup just returns nothing). Install it from the
+# official Apple CDN and leave the service running and set to Automatic, so a
+# fresh machine gets working wireless discovery from "flc drivers install".
+function Install-Bonjour {
+    Write-Host ''
+    Write-Host '=== Installing Bonjour (mDNS responder for Wi-Fi discovery) ==='
+    $pre = Get-Service -Name $BONJOUR_SERVICE -ErrorAction SilentlyContinue
+    if ($pre) {
+        Write-Host 'Bonjour Service is already registered - no install needed.'
+    } else {
+        if (-not (Test-Path $BONJOURMSI)) {
+            Write-Host 'Offline installer not found. Downloading from apple.com (~2.6 MB)...'
+            if (-not (Get-BonjourMSI)) {
+                Write-Host 'ERROR: Bonjour installer unavailable. Check network or run "flc configure".'
+                return $false
+            }
+        }
+        Write-Host 'Running silent install...'
+        if (-not (Test-Path $LOGDIR)) { New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null }
+        $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i',$BONJOURMSI,'/qn','/norestart','/L*v',(Join-Path $LOGDIR 'bonjour-install.log')) -Wait -PassThru
+        Write-Host ('msiexec exit code: ' + $p.ExitCode)
+        Start-Sleep -Seconds 2
+    }
+    $svc = Get-Service -Name $BONJOUR_SERVICE -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        Write-Host 'Bonjour Service is not registered. See logs\bonjour-install.log'
+        return $false
+    }
+    if ($svc.Status -ne 'Running') {
+        try { Start-Service -Name $BONJOUR_SERVICE -ErrorAction Stop } catch {}
+    }
+    try { Set-Service -Name $BONJOUR_SERVICE -StartupType Automatic -ErrorAction Stop } catch {}
+    $now = Get-Service -Name $BONJOUR_SERVICE
+    Write-Host ('Bonjour Service: ' + $now.Status + ' (' + $now.StartType + ')')
+    Log 'drivers install bonjour'
+    return $true
 }
 
 function Uninstall-Drivers([switch]$ClearAll) {
@@ -1205,7 +1290,7 @@ function Get-BonjourState {
         if ($svc.Status -eq 'Running') { return 'Running (Wi-Fi discovery available)' }
         return ('stopped - wireless discovery is off ("flc drivers wifi" starts it)')
     }
-    return 'NOT FOUND (not bundled with the Apple driver MSI - install "Bonjour for Windows")'
+    return 'NOT FOUND (needed for Wi-Fi discovery - install it with: flc drivers install)'
 }
 
 # Apple's mDNS responder ships as a Manual-start service, so it is very often
@@ -1216,8 +1301,7 @@ function Ensure-BonjourRunning {
     $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
     if (-not $svc) {
         Write-Host 'Bonjour Service is not installed - an iPhone can never be found over Wi-Fi.'
-        Write-Host 'Note: it is NOT part of the Apple Mobile Device Support MSI that flc installs.'
-        Write-Host 'Install "Bonjour for Windows" (or iTunes) from Apple, then run: flc drivers wifi'
+        Write-Host 'Install it with:  flc drivers install   (Bonjour is a separate Apple MSI)'
         return $false
     }
     if ($svc.Status -eq 'Running') { return $true }

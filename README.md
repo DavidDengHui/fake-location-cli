@@ -226,10 +226,11 @@ Everything about the iPhone lives here, wired and wireless alike.
 Over Wi-Fi the same userspace tunnel is built as over USB — still with **no
 administrator rights** and no tunneld. Requirements: the iPhone was trusted on
 this PC at least once, is **unlocked**, and is on the **same Wi-Fi network**; the
-the **Bonjour Service** (Apple's mDNS responder) must be running. Note it is
-**not** part of the Apple Mobile Device Support package flc installs — install
-Apple's "Bonjour for Windows" (or iTunes) if it is missing. `flc server status`
-and `flc drivers list` report it; `flc drivers wifi` starts it when stopped.
+the **Bonjour Service** (Apple's mDNS responder) must be running. Bonjour ships
+as a separate Apple MSI, not inside Apple Mobile Device Support — flc handles it
+anyway: `flc configure` downloads it and `flc drivers install` installs it and
+starts the service. `flc server status` and `flc drivers list` report its state;
+`flc drivers wifi` starts it on its own.
 
 ### ddi — offline Developer Disk Image
 
@@ -443,9 +444,8 @@ PC to rebuild the portable runtime.
   nothing at all. `flc devices list` and `flc server status` print an
   `mDNS/Bonjour : ...` line showing its state; `flc devices wifi` starts it for
   you (one UAC prompt), or run `flc drivers wifi` as administrator. If it reads
-  NOT FOUND, Bonjour is not installed at all — install Apple's "Bonjour for
-  Windows"; **`flc drivers install` does not install it** (it only installs
-  Apple Mobile Device Support).
+  NOT FOUND, Bonjour is missing — run `flc drivers install`, which installs it
+  (a separate Apple MSI, not bundled with Apple Mobile Device Support).
   `flc devices browse` shows what Bonjour sees right now; `flc devices
   reconnect` refreshes the Apple service.
 - **The connection drops when the iPhone locks** — expected: iOS suspends Wi-Fi
