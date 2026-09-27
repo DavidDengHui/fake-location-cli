@@ -1234,12 +1234,17 @@ function Do-Devices($devArgs) {
         }
         '^(browse|-b)$' {
             [void](Ensure-BonjourRunning)
-            Write-Host 'Browsing the local network for iPhones (Bonjour, a few seconds)...'
+            Write-Host 'Browsing for iPhones advertising RemotePairing over Bonjour (a few seconds)...'
             Invoke-Py -NoColor @('remote','browse')
             Write-Host ''
-            Write-Host 'If the list is empty: enable Developer Mode on the iPhone'
-            Write-Host '(Settings > Privacy & Security > Developer Mode), keep it unlocked'
-            Write-Host 'and on the same network/subnet as this PC.'
+            Write-Host 'NOTE: this is the RemotePairing path (used by "flc devices pair"), which needs'
+            Write-Host 'more than the normal wireless path. An empty list here does NOT mean wireless'
+            Write-Host 'is broken. For cable-free "flc set" the check is:'
+            Write-Host '  flc devices wifi   (once, on USB) -> unplug -> wait ~20 s -> flc devices list'
+            Write-Host 'and the iPhone must appear as (Wi-Fi).'
+            Write-Host 'If you do want to pair here: enable Developer Mode on the iPhone'
+            Write-Host '(Settings > Privacy & Security > Developer Mode), keep it unlocked, same'
+            Write-Host 'subnet (/24) as this PC, Windows network profile Private, no VPN.'
             Log 'devices browse'
         }
         '^(pair|-p)$' {
@@ -1454,7 +1459,9 @@ function Set-DeviceWifi($state) {
     [void](Show-WifiState)
     Write-Host ''
     Write-Host 'Done. Unplug the cable and keep the iPhone unlocked on the same Wi-Fi network.'
-    Write-Host 'Check it with:  flc devices list'
+    Write-Host 'Wait ~20 s, then check it with:  flc devices list'
+    Write-Host 'If it is still not listed as (Wi-Fi): same subnet (same /24), Windows network'
+    Write-Host 'profile set to Private, no VPN, then:  flc devices reconnect'
     Log 'devices wifi on'
 }
 
