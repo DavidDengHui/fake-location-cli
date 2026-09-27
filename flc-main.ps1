@@ -468,6 +468,42 @@ function Invoke-Configure {
 }
 
 # Build the minimal runtime from the materials in assets\dist (offline).
+# Trim a python runtime down to what flc needs at run time. Both the build and
+# "flc make" on an existing runtime run this, so the portable package and a
+# from-source "flc configure && flc make" stay identical file for file.
+function Trim-Runtime($root) {
+    Write-Host 'Trimming development/GUI/test components...'
+    $remove = @(
+        'include','libs','tcl','Doc','Scripts','Lib\test','Lib\idlelib','Lib\tkinter','Lib\ensurepip',
+        'Lib\site-packages\pip','Lib\site-packages\setuptools','Lib\site-packages\wheel','Lib\site-packages\pkg_resources',
+        'Lib\site-packages\pythonwin','Lib\site-packages\win32comext','Lib\site-packages\adodbapi','Lib\site-packages\isapi',
+        'Lib\site-packages\Crypto\SelfTest',
+        'Lib\site-packages\PyWin32.chm','Lib\site-packages\tests'
+    )
+    foreach ($r in $remove) {
+        $p = Join-Path $root $r
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    foreach ($pat in @('pip-*.dist-info','setuptools-*.dist-info','wheel-*.dist-info')) {
+        Get-ChildItem (Join-Path $root 'Lib\site-packages') -Directory -Filter $pat -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    # Test suites that ship inside dependencies (up to 3 levels deep) are dead
+    # weight at run time.
+    $site = Join-Path $root 'Lib\site-packages'
+    if (Test-Path $site) {
+        $baseLen = $site.Length
+        $victims = @(Get-ChildItem $site -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                ($_.Name -eq 'tests' -or $_.Name -eq 'test') -and
+                ($_.FullName.Substring($baseLen).TrimStart('\').Split('\').Count -le 3)
+            })
+        foreach ($v in $victims) { Remove-Item $v.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    Get-ChildItem $root -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Build-Runtime {
     $materials = (Test-Path $NUPKG) -and (Test-Path (Join-Path $WHEELS '.complete')) -and
                  (Test-Path $DRIVERMSI) -and (Test-DdiComplete)
@@ -498,23 +534,7 @@ function Build-Runtime {
             exit 1
         }
 
-        Write-Host 'Trimming development/GUI/test components...'
-        $remove = @(
-            'include','libs','tcl','Doc','Scripts','Lib\test','Lib\idlelib','Lib\tkinter','Lib\ensurepip',
-            'Lib\site-packages\pip','Lib\site-packages\setuptools','Lib\site-packages\wheel','Lib\site-packages\pkg_resources',
-            'Lib\site-packages\pythonwin','Lib\site-packages\win32comext','Lib\site-packages\adodbapi','Lib\site-packages\isapi',
-            'Lib\site-packages\Crypto\SelfTest'
-        )
-        foreach ($r in $remove) {
-            $p = Join-Path $stage $r
-            if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
-        }
-        foreach ($pat in @('pip-*.dist-info','setuptools-*.dist-info','wheel-*.dist-info')) {
-            Get-ChildItem (Join-Path $stage 'Lib\site-packages') -Directory -Filter $pat -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        Get-ChildItem $stage -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Trim-Runtime $stage
 
         Write-Host 'Verifying the built runtime...'
         $pmd = & $stagePy -m pymobiledevice3 version 2>&1
@@ -547,8 +567,10 @@ function Invoke-Make {
         $chk = & $PY -m pymobiledevice3 version 2>&1
         if ($LASTEXITCODE -eq 0 -and $chk) {
             Write-Host ("Minimal runtime is already built: " + ($chk -join ''))
-            Write-Host 'Run "flc make clean" first if you want to rebuild it from scratch.'
-            if (-not (Test-DdiComplete)) {
+        Write-Host 'Run "flc make clean" first if you want to rebuild it from scratch.'
+        # Re-apply the trim so an already-built runtime matches a fresh build.
+        Trim-Runtime $PYDIR
+        if (-not (Test-DdiComplete)) {
                 Write-Host 'DDI incomplete; running configure to complete it...'
                 Invoke-Configure
             }
