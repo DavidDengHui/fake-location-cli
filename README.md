@@ -227,7 +227,7 @@ Over Wi-Fi the same userspace tunnel is built as over USB — still with **no
 administrator rights** and no tunneld. Requirements: the iPhone was trusted on
 this PC at least once, is **unlocked**, and is on the **same Wi-Fi network**; the
 **Bonjour Service** installed with Apple Mobile Device Support must be running
-(`flc server status` reports it, `flc drivers install` restores it).
+(`flc server status` reports it; `flc devices wifi` starts it when it is stopped).
 
 ### ddi — offline Developer Disk Image
 
@@ -434,11 +434,15 @@ PC to rebuild the portable runtime.
   `flc ddi install`.
 - **`flc devices list` shows nothing over Wi-Fi / `flc set --wifi` says no iPhone
   is visible** — the iPhone must have been trusted on this PC at least once over
-  USB, be unlocked, and be on the same Wi-Fi network. Run `flc devices wifi`
-  while it is on USB, then `flc server status`: the **Bonjour Service** has to be
-  Running (reinstall/repair with `flc drivers install`). `flc devices browse`
-  shows what Bonjour sees right now; `flc devices reconnect` refreshes the Apple
-  service.
+  USB, be unlocked, and be on the same Wi-Fi network (same subnet). Run
+  `flc devices wifi` while it is on USB. The usual cause is that the **Bonjour
+  Service** (Apple's mDNS responder) is not running: it ships as a Manual-start
+  service, and while it is stopped every wireless lookup silently returns
+  nothing at all. `flc devices list` and `flc server status` print an
+  `mDNS/Bonjour : ...` line showing its state; `flc devices wifi` starts it for
+  you (one UAC prompt), or run `flc drivers wifi` as administrator.
+  `flc devices browse` shows what Bonjour sees right now; `flc devices
+  reconnect` refreshes the Apple service.
 - **The connection drops when the iPhone locks** — expected: iOS suspends Wi-Fi
   syncing while the phone is locked or asleep. Unlock it and flc rebuilds the
   tunnel and resumes holding by itself.

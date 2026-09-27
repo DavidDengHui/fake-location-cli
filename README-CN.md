@@ -384,9 +384,13 @@ point 4>
 - **配对 / DDI 安装报 usbmux 错误 183** —— 电脑上的旧配对记录冲突或损坏。以管理员运行 `flc server kill --pair`（短选项 `-p`），随后重插手机、在 iPhone 上重新点「信任」，再运行 `flc ddi install`。
 - **`flc devices list` 里没有无线设备 / `flc set --wifi` 提示看不到 iPhone** —— 这台
   iPhone 必须已在这台电脑上用 USB 信任过至少一次、处于解锁状态，并与电脑在同一个 Wi-Fi
-  网络。插着数据线时运行一次 `flc devices wifi`，再看 `flc server status`：**Bonjour
-  服务**必须是 Running（可用 `flc drivers install` 修复）。`flc devices browse` 能显示
-  此刻 Bonjour 看到的东西，`flc devices reconnect` 可刷新 Apple 服务。
+  网络（同一网段）下。插着数据线时运行一次 `flc devices wifi`。
+  最常见的原因是 **Bonjour 服务（Apple 的 mDNS 响应器）没有在运行** —— 它默认是「手动」
+  启动，停着的时候所有无线发现都会静默返回空，什么都不报错。`flc devices list` 会直接打印
+  `mDNS/Bonjour : ...` 一行告诉你当前状态；`flc devices wifi` 会自动把它启动起来（需同意
+  一次 UAC 提权），也可以直接以管理员运行 `flc drivers wifi`。
+  `flc devices browse` 能显示此刻 Bonjour 看到的东西，`flc devices reconnect` 可刷新 Apple
+  服务。
 - **手机锁屏后无线连接断开** —— 正常现象：iOS 在锁屏/休眠时会挂起 Wi-Fi 同步。解锁手机，
   flc 会自动重建隧道并继续维持。
 - **总是连到另一台 iPhone** —— 用 `--udid <UDID>` 明确指定设备

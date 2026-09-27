@@ -854,6 +854,8 @@ function Show-Status {
             Write-Host 'Wireless (Wi-Fi)      : none visible (turn on once with: flc devices wifi)'
         }
     }
+    # Discovery silently finds nothing while Apple's mDNS responder is stopped.
+    Write-Host ('mDNS/Bonjour          : ' + (Get-BonjourState))
     Write-Host '--------------------------------------------'
     Show-Devices
     Write-Host '============================================'
@@ -998,6 +1000,7 @@ function Do-Drivers($drvArgs) {
             } else {
                 Write-Host 'Apple USB device nodes: none present (connect an iPhone to see them).'
             }
+            Write-Host ('Bonjour Service (mDNS) : ' + (Get-BonjourState))
         }
         '^(install|-i)$' {
             if (Invoke-Elevated @($CliArgs)) { return }
@@ -1007,7 +1010,13 @@ function Do-Drivers($drvArgs) {
             if (Invoke-Elevated @($CliArgs)) { return }
             Uninstall-Drivers -ClearAll:$clearAll
         }
-        default { Write-Host 'Unknown drivers action. Use: flc drivers list|status|install|uninstall'; exit 1 }
+        '^(wifi|wireless|-w)$' {
+            # Apple's mDNS responder - while it is stopped no iPhone is ever
+            # found over Wi-Fi, and every lookup just returns nothing.
+            if (Invoke-Elevated @($CliArgs)) { return }
+            Start-BonjourService
+        }
+        default { Write-Host 'Unknown drivers action. Use: flc drivers list|status|install|uninstall|wifi'; exit 1 }
     }
 }
 
@@ -1092,6 +1101,9 @@ function Show-Devices {
     }
     if (@($list | Where-Object { $_ -isnot [string] -and $_.ConnectionType -eq 'Network' }).Count -eq 0) {
         Write-Host '  (none over Wi-Fi - turn it on once on USB with: flc devices wifi)'
+        # A stopped mDNS responder is the usual reason nothing is ever found.
+        $bs = Get-BonjourState
+        if ($bs -notmatch '^Running') { Write-Host ('  mDNS/Bonjour        : ' + $bs) }
     }
 }
 
@@ -1110,11 +1122,17 @@ function Do-Devices($devArgs) {
             Set-DeviceWifi $state
         }
         '^(browse|-b)$' {
+            [void](Ensure-BonjourRunning)
             Write-Host 'Browsing the local network for iPhones (Bonjour, a few seconds)...'
             Invoke-Py -NoColor @('remote','browse')
+            Write-Host ''
+            Write-Host 'If the list is empty: enable Developer Mode on the iPhone'
+            Write-Host '(Settings > Privacy & Security > Developer Mode), keep it unlocked'
+            Write-Host 'and on the same network/subnet as this PC.'
             Log 'devices browse'
         }
         '^(pair|-p)$' {
+            [void](Ensure-BonjourRunning)
             Write-Host 'Pairing an iPhone over Wi-Fi (RemotePairing).'
             Write-Host 'On the iPhone: enable Developer Mode and keep it on the same Wi-Fi network.'
             Write-Host 'Pick the device in the list, then enter the code shown here on the iPhone.'
@@ -1181,9 +1199,60 @@ function Get-BonjourState {
     $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
     if ($svc) {
         if ($svc.Status -eq 'Running') { return 'Running (Wi-Fi discovery available)' }
-        return ($svc.Status.ToString() + ' (start it for Wi-Fi discovery: flc drivers install)')
+        return ('stopped - wireless discovery is off ("flc drivers wifi" starts it)')
     }
     return 'NOT FOUND (iPhone Wi-Fi discovery needs it; run: flc drivers install)'
+}
+
+# Apple's mDNS responder ships as a Manual-start service, so it is very often
+# stopped - and then every wireless lookup silently finds nothing at all, with
+# no hint about why. Check it before any Wi-Fi action and start it when needed
+# (starting a service needs administrator rights, hence the UAC relaunch).
+function Ensure-BonjourRunning {
+    $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        Write-Host 'Bonjour Service is not installed - an iPhone can never be found over Wi-Fi.'
+        Write-Host 'Install the Apple components with:  flc drivers install'
+        return $false
+    }
+    if ($svc.Status -eq 'Running') { return $true }
+
+    Write-Host 'Bonjour Service is stopped - the iPhone cannot be discovered over Wi-Fi.'
+    Write-Host 'Starting it (administrator rights are needed once)...'
+    try {
+        Start-Service -Name 'Bonjour Service' -ErrorAction Stop
+    } catch {
+        if (-not (Invoke-ElevatedWait 'drivers wifi')) {
+            Write-Host 'WARNING: Bonjour Service is still stopped - Wi-Fi discovery will find nothing.'
+            return $false
+        }
+    }
+    Start-Sleep -Seconds 2
+    $now = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
+    if ($now -and $now.Status -eq 'Running') {
+        Write-Host 'Bonjour Service is running now.'
+        return $true
+    }
+    Write-Host 'WARNING: Bonjour Service is still stopped - Wi-Fi discovery will find nothing.'
+    return $false
+}
+
+# Worker behind "flc drivers wifi": start Apple's mDNS responder. This needs
+# administrator rights, so it is reached either from an already elevated shell or
+# through the UAC relaunch performed by Invoke-Elevated / Ensure-BonjourRunning.
+function Start-BonjourService {
+    $svc = Get-Service -Name 'Bonjour Service' -ErrorAction SilentlyContinue
+    if (-not $svc) { Write-Host 'Bonjour Service is not installed. Run: flc drivers install'; exit 1 }
+    if ($svc.Status -ne 'Running') {
+        try { Start-Service -Name 'Bonjour Service' -ErrorAction Stop }
+        catch { Write-Host ('ERROR: could not start it: ' + $_.Exception.Message); exit 1 }
+    }
+    # Keep it across reboots so wireless discovery does not break again.
+    try { Set-Service -Name 'Bonjour Service' -StartupType Automatic -ErrorAction Stop } catch {}
+    $now = Get-Service -Name 'Bonjour Service'
+    Write-Host ('Bonjour Service (mDNS) : ' + $now.Status + ' (' + $now.StartType + ')')
+    Write-Host 'Wi-Fi discovery is on - unplug the cable and check with:  flc devices list'
+    Log 'drivers wifi'
 }
 
 function Get-NetworkDevices {
@@ -1265,6 +1334,9 @@ function Set-DeviceWifi($state) {
         Log 'devices wifi off'
         return
     }
+    # The iPhone announces itself over mDNS; without the Bonjour responder the
+    # "on" switch looks like it worked but the device never appears afterwards.
+    [void](Ensure-BonjourRunning)
     Write-Host 'Turning Wi-Fi on for the iPhone (keep it connected for this step)...'
     Invoke-Py -NoColor @('lockdown','wifi-connections','on')
     Start-Sleep -Seconds 1
@@ -1556,6 +1628,7 @@ function Show-Help {
     Write-Host '  flc drivers list|-l            List required drivers and whether they are present'
     Write-Host '  flc drivers status|-s          Show whether the drivers are installed'
     Write-Host '  flc drivers install|-i         Install drivers (offline MSI if present, else download)'
+    Write-Host '  flc drivers wifi|-w            Start the Bonjour/mDNS service that Wi-Fi discovery needs'
     Write-Host '  flc drivers uninstall|-u [--clear]  Uninstall driver; --clear also wipes Lockdown plists'
     Write-Host ''
     Write-Host '  flc devices list|-l            List iPhones (USB and Wi-Fi)'
