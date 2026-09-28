@@ -181,6 +181,34 @@ function Get-ConnectedDevices {
     return @($list)
 }
 
+# Wireless discovery that actually works. The iPhone advertises itself over Bonjour
+# as _apple-mobdev2 (Wi-Fi sync); Apple Mobile Device Service does not always expose
+# such devices through usbmux, so ask Bonjour directly. Each entry carries the real
+# UDID, so it can be used like any other device.
+function Get-Mobdev2Devices {
+    if (-not (Test-Path $PY)) { return @() }
+    # The iPhone only answers when it re-announces itself, so a single browse often
+    # returns nothing even though the device is on the network. Retry a few times.
+    # Force UTF-8 while capturing: an earlier command can leave the console on a
+    # legacy code page, which would turn non-ASCII device names into mojibake.
+    $prevEnc = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $raw = & $PY -m pymobiledevice3 --no-color bonjour mobdev2 --timeout 5 2>$null
+            $txt = ($raw -join "`n")
+            $start = $txt.IndexOf('[')
+            if ($start -lt 0) { continue }
+            try { $list = @($txt.Substring($start) | ConvertFrom-Json) } catch { $list = @() }
+            $list = @($list | Where-Object { $_ -ne $null -and $_.UniqueDeviceID })
+            if ($list.Count -gt 0) { return $list }
+        }
+    } finally {
+        [Console]::OutputEncoding = $prevEnc
+    }
+    return @()
+}
+
 # Runs automatically at the end of "make install": install the Apple USB driver
 # (one UAC prompt), cache the offline DDI, and (if a phone is connected) put the
 # DDI on the phone - so no separate "drivers install" / "ddi install" is needed.
@@ -1179,38 +1207,58 @@ function Uninstall-Drivers([switch]$ClearAll) {
 
 function Show-Devices {
     Write-Host 'Connected Apple devices:'
+    $rows = New-Object System.Collections.ArrayList
+
+    # 1) whatever usbmux (Apple Mobile Device Service) exposes
     $raw = & $PY -m pymobiledevice3 --no-color usbmux list 2>$null
     $json = ($raw -join "`n").Trim()
-    try {
-        $list = $json | ConvertFrom-Json
-    } catch {
-        Write-Host '  (could not read device list; is Apple Mobile Device Service running?)'
-        return
+    $usb = @()
+    try { $usb = @($json | ConvertFrom-Json) } catch { $usb = @() }
+    foreach ($d in $usb) {
+        # "usbmux list" prints nothing when there is no device; skip the empty row.
+        if ($null -eq $d) { continue }
+        if ($d -is [string]) {
+            [void]$rows.Add([pscustomobject]@{ Name=$null; Prod=''; Ios=$null; Udid=$d; Conn='USB'; Bare=$true })
+            continue
+        }
+        $udid = $d.UniqueDeviceID
+        if (-not $udid) { $udid = $d.Identifier }
+        # An entry without a UDID cannot be targeted; don't show a blank row.
+        if (-not $udid) { continue }
+        $conn = $d.ConnectionType
+        if ($conn -eq 'Network') { $conn = 'Wi-Fi' }
+        [void]$rows.Add([pscustomobject]@{ Name=$d.DeviceName; Prod=$d.ProductType; Ios=$d.ProductVersion; Udid=$udid; Conn=$conn; Bare=$false })
     }
-    if (-not $list -or $list.Count -eq 0) {
+
+    # 2) wireless devices found over Bonjour (_apple-mobdev2). AMDS does not always
+    #    list them, so without this a Wi-Fi iPhone never shows up.
+    foreach ($w in (Get-Mobdev2Devices)) {
+        $udid = $w.UniqueDeviceID
+        if (-not $udid) { $udid = $w.Identifier }
+        if (-not $udid) { continue }
+        $dup = $false
+        foreach ($r in $rows) { if ($r.Udid -eq $udid) { $dup = $true; break } }
+        if ($dup) { continue }
+        [void]$rows.Add([pscustomobject]@{ Name=$w.DeviceName; Prod=$w.ProductType; Ios=$w.ProductVersion; Udid=$udid; Conn='Wi-Fi'; Bare=$false })
+    }
+
+    if ($rows.Count -eq 0) {
         Write-Host '  none. Connect an iPhone via USB, unlock it and tap Trust.'
         return
     }
     $i = 0
-    foreach ($d in $list) {
+    foreach ($r in $rows) {
         $i++
-        if ($d -is [string]) {
-            Write-Host ("  [{0}] UDID: {1}  (use 'devices connect' to pair for name/details)" -f $i, $d)
+        if ($r.Bare) {
+            Write-Host ("  [{0}] UDID: {1}  (use 'devices connect' to pair for name/details)" -f $i, $r.Udid)
             continue
         }
-        $name = $d.DeviceName
-        $udid = $d.UniqueDeviceID
-        if (-not $udid) { $udid = $d.Identifier }
-        $prod = $d.ProductType
-        $ios  = $d.ProductVersion
-        $conn = $d.ConnectionType
-        if ($conn -eq 'Network') { $conn = 'Wi-Fi' }
-        if (-not $name) { $name = '(unknown name)' }
-        if (-not $prod) { $prod = '' }
-        $ver = if ($ios) { ' iOS ' + $ios } else { '' }
-        Write-Host ("  [{0}] {1}  {2}{3}  UDID: {4}  ({5})" -f $i, $name, $prod, $ver, $udid, $conn)
+        $name = if ($r.Name) { $r.Name } else { '(unknown name)' }
+        $prod = if ($r.Prod) { $r.Prod } else { '' }
+        $ver  = if ($r.Ios) { ' iOS ' + $r.Ios } else { '' }
+        Write-Host ("  [{0}] {1}  {2}{3}  UDID: {4}  ({5})" -f $i, $name, $prod, $ver, $r.Udid, $r.Conn)
     }
-    if (@($list | Where-Object { $_ -isnot [string] -and $_.ConnectionType -eq 'Network' }).Count -eq 0) {
+    if (-not ($rows | Where-Object { $_.Conn -eq 'Wi-Fi' })) {
         Write-Host '  (none over Wi-Fi - turn it on once on USB with: flc devices wifi)'
         # A stopped mDNS responder is the usual reason nothing is ever found.
         $bs = Get-BonjourState
@@ -1237,7 +1285,20 @@ function Do-Devices($devArgs) {
             Write-Host 'Browsing for iPhones advertising RemotePairing over Bonjour (a few seconds)...'
             Invoke-Py -NoColor @('remote','browse')
             Write-Host ''
-            Write-Host 'NOTE: this is the RemotePairing path (used by "flc devices pair"), which needs'
+            # The iPhone advertises Wi-Fi sync as _apple-mobdev2. That is the discovery
+            # which actually works, so show what it finds as well.
+            $md = Get-Mobdev2Devices
+            Write-Host 'iPhones answering over Bonjour as Wi-Fi sync (_apple-mobdev2):'
+            if ($md.Count -eq 0) {
+                Write-Host '  none.'
+            } else {
+                foreach ($w in $md) {
+                    $nm = if ($w.DeviceName) { $w.DeviceName } else { '(unknown name)' }
+                    Write-Host ("  {0}  {1}  iOS {2}  UDID: {3}  ip: {4}" -f $nm, $w.ProductType, $w.ProductVersion, $w.UniqueDeviceID, $w.ip)
+                }
+            }
+            Write-Host ''
+            Write-Host 'NOTE: the block above is the RemotePairing path (used by "flc devices pair"), which needs'
             Write-Host 'more than the normal wireless path. An empty list here does NOT mean wireless'
             Write-Host 'is broken. For cable-free "flc set" the check is:'
             Write-Host '  flc devices wifi   (once, on USB) -> unplug -> wait ~20 s -> flc devices list'
