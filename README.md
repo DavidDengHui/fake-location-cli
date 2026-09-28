@@ -219,7 +219,8 @@ Everything about the iPhone lives here, wired and wireless alike.
 | `flc devices connect` | `-c` | Start the Apple service and send a pairing request (tap Trust on the iPhone). Administrator. |
 | `flc devices wifi [on\|off]` | `-w` | Turn Wi-Fi use on/off for the iPhone (once, while it is on USB). On = the cable can stay unplugged afterwards; `off` returns to USB-only. |
 | `flc devices browse` | `-b` | Browse the local network for iPhones with Bonjour — useful before one shows up in `flc devices list`. |
-| `flc devices pair [name]` | `-p` | Pair an iPhone over Wi-Fi directly (RemotePairing). Needs Developer Mode on the iPhone; pick the device in the list and type the code shown here on the iPhone. |
+| `flc devices pair [name]` | `-p` | Pair an iPhone over Wi-Fi (RemotePairing, advertised by the **device**). Needs Developer Mode. iOS 27+ no longer advertises itself, so the list stays empty — use `pair-host` below. |
+| `flc devices pair-host` | `-ph` | **iOS 27+ wireless pairing**: the **PC** advertises itself as a pairable host and the iPhone initiates. On the iPhone open Settings > Developer > Paired Macs, tap this PC under "Other Devices", choose Pair, then type the 6-digit code shown here. |
 | `flc devices disconnect` | `-d` | Stop the Apple service, releasing all iPhone connections. Administrator. |
 | `flc devices reconnect` | `-r` | Restart the Apple service and re-list devices (handy after a glitch). Administrator. |
 

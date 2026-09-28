@@ -203,7 +203,8 @@ flc make update github   # 或从 GitHub 更新（本机需可访问 GitHub）
 | `flc devices connect` | `-c` | 启动 Apple 服务并发起配对请求（在 iPhone 上点信任）。需要管理员。 |
 | `flc devices wifi [on\|off]` | `-w` | 打开/关闭 iPhone 的 Wi-Fi 使用（仅一次，此时需插着数据线）。打开后就可以不插线；`off` 回到只用数据线。 |
 | `flc devices browse` | `-b` | 用 Bonjour 搜索局域网里的 iPhone——在它还没出现在 `flc devices list` 时很有用。 |
-| `flc devices pair [名称]` | `-p` | 直接通过 Wi-Fi 配对 iPhone（RemotePairing）。需要 iPhone 开启开发者模式；在列表里选设备，并把电脑上显示的配对码输入到 iPhone。 |
+| `flc devices pair [名称]` | `-p` | 通过 Wi‑Fi 配对 iPhone（RemotePairing，由**手机**广播）。需要开启开发者模式。**iOS 27+ 已不再广播**，列表会一直为空，请改用下面的 `pair-host`。 |
+| `flc devices pair-host` | `-ph` | **iOS 27+ 无线配对**：改为**电脑**广播自己为可配对主机，由 iPhone 主动发起。手机上打开 设置 → 开发者 → Paired Macs，在「其他设备」下点这台电脑并选配对，再输入电脑上显示的 6 位验证码。 |
 | `flc devices disconnect` | `-d` | 停止 Apple 服务，释放所有 iPhone 连接。需要管理员。 |
 | `flc devices reconnect` | `-r` | 重启 Apple 服务并重新列出设备（出问题时很有用）。需要管理员。 |
 

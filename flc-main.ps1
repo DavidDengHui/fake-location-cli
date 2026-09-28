@@ -1249,8 +1249,10 @@ function Do-Devices($devArgs) {
         }
         '^(pair|-p)$' {
             [void](Ensure-BonjourRunning)
-            Write-Host 'Pairing an iPhone over Wi-Fi (RemotePairing).'
+            Write-Host 'Pairing an iPhone over Wi-Fi (RemotePairing, advertised by the device).'
             Write-Host 'On the iPhone: enable Developer Mode and keep it on the same Wi-Fi network.'
+            Write-Host 'NOTE: iOS 27+ no longer advertises itself, so this list stays empty there.'
+            Write-Host '      On iOS 27+ use instead:  flc devices pair-host'
             Write-Host 'Pick the device in the list, then enter the code shown here on the iPhone.'
             if ($extra -and $extra.Count -gt 0) {
                 Invoke-Py -NoColor @('remote','pair','--name',[string]$extra[0])
@@ -1258,6 +1260,25 @@ function Do-Devices($devArgs) {
                 Invoke-Py -NoColor @('remote','pair')
             }
             Log 'devices pair'
+        }
+        '^(pair-host|-ph)$' {
+            # iOS 27+ dropped the device-side RemotePairing advertisement. Now the
+            # COMPUTER advertises itself as a "pairable host" and the iPhone starts
+            # the pairing from Settings > Developer > Paired Macs. Nothing happens
+            # until the user opens that screen, so spell out every step.
+            [void](Ensure-BonjourRunning)
+            Write-Host 'iOS 27+ wireless pairing: this PC advertises itself, the iPhone connects.'
+            Write-Host ''
+            Write-Host 'On the iPhone now:'
+            Write-Host '  1. Settings > Privacy & Security > Developer Mode - ON'
+            Write-Host '  2. Join the same Wi-Fi network as this computer'
+            Write-Host '  3. Settings > Developer > Paired Macs - this PC shows under'
+            Write-Host '     "Other Devices" only while that screen is open'
+            Write-Host '  4. Tap it, choose Pair, then type the 6-digit code printed here.'
+            Write-Host ''
+            Write-Host 'Waiting for the iPhone (Ctrl-C to stop)...'
+            Invoke-Py -NoColor @('remote','pair-host')
+            Log 'devices pair-host'
         }
         '^(connect|-c)$' {
             if (Invoke-Elevated @($CliArgs)) { return }
@@ -1296,7 +1317,7 @@ function Do-Devices($devArgs) {
             }
             Log 'devices reconnect'
         }
-        default { Write-Host 'Unknown devices action. Use: flc devices list|connect|wifi|browse|pair|disconnect|reconnect'; exit 1 }
+        default { Write-Host 'Unknown devices action. Use: flc devices list|connect|wifi|browse|pair|pair-host|disconnect|reconnect'; exit 1 }
     }
 }
 
@@ -1755,6 +1776,7 @@ function Show-Help {
     Write-Host '                                 on = use it cable-free afterwards; off = USB only again'
     Write-Host '  flc devices browse|-b          Browse the local network for iPhones (Bonjour)'
     Write-Host '  flc devices pair|-p [name]     Pair an iPhone over Wi-Fi (RemotePairing, Developer Mode)'
+    Write-Host '  flc devices pair-host|-ph      iOS 27+ wireless pairing: PC advertises, iPhone connects'
     Write-Host '  flc devices disconnect|-d      Release connections (stop the service)'
     Write-Host '  flc devices reconnect|-r       Restart the service and re-list devices'
     Write-Host ''
